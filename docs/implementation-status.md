@@ -579,3 +579,77 @@ it.
 - CSRF tokens, per-user accounts, and TLS.
 - The settings page remains read-only until a configuration API exists.
 - No session expiry beyond closing the tab.
+
+## Remaining-number cleanup and YAML viewer increment
+
+Several surfaces still displayed invented values, and the release center had no way to show
+what a candidate would actually write to the runtime. This increment removes the remaining
+fabricated numbers and adds a real configuration viewer.
+
+### New endpoint
+
+`GET /api/v1/config-candidates/{id}/content` returns the exact YAML bytes of an immutable
+candidate, with its recorded SHA-256, status, and validation message. The handler recomputes
+the digest and **refuses to serve content that does not match the record**, so a truncated
+or tampered snapshot is reported rather than displayed as authoritative.
+
+### Fabricated values replaced
+
+| Surface | Before | Now |
+|---|---|---|
+| Terminals: 已登记终端 / 已绑定策略组 / 识别机制已验证 | `4`, `4`, `0` | Real counts. The third card became "可用于路由的识别方式", counting only `source_ip`/`cidr`, because MAC and manual identities are inventory-only and cannot be enforced by a Mihomo rule |
+| Groups: 全部代理组 tab count | `6` | Real count |
+| Rules: 示例列表 · 共 86 条 | static | `共 N 条 · 启用 M 条` |
+| Rules: per-source counts | `4 / 82 / 2` | Counted from the persisted `source` field |
+| Subscriptions: 2 个已启用 | static | `enabled / total` |
+| Subscriptions: 最近探测结果 card | invented snapshot id, node/group/rule counts | The most recent real fetch: source name, time, status, and node count from the current snapshot |
+| Release preview: candidate id, SHA, change counts, four fabricated check rows, invented diff | all static | Real candidate id/hash/status plus the same health checks the dashboard uses |
+| Settings page | `mihomo-primary`, `v1.19.12`, `/etc/mihomo/config.yaml`, backup and retention controls | Removed the page-level save button; the page states it is read-only |
+
+### Fake actions removed or implemented
+
+- **Implemented:** 查看当前生效 YAML (opens the latest verified candidate), 查看完整 YAML in
+  the preview, 刷新状态 (reloads the overview), 刷新全部启用订阅 (refreshes each enabled
+  source in sequence, reporting successes and failures separately).
+- **Removed:** 保存草稿 on the groups and rules pages, 保存设置, 作废候选, 立即备份,
+  a retention selector, and a verification toggle. Each either duplicated a per-row save or
+  had no backend at all.
+- **Marked unimplemented rather than faked:** the "订阅附带的规则怎么处理" selector is now
+  disabled with an explicit note that subscription-supplied rules are neither imported nor
+  ignored, and that changing it has no effect. The publish pre-check notice now lists only
+  the checks that actually run, and names duplicate/shadowed-rule detection as not
+  implemented instead of implying it exists.
+
+### Verified on the deployed stack
+
+The VM cannot reach the operator's subscription host (it resolves to an address that times
+out; 443 to that host is unreachable while other sites work), so a temporary public fixture
+was used to exercise the pipeline and then deleted — no fake records were left behind:
+
+1. Fixture refreshed: `proxyCount=2`.
+2. Candidate built: `status=validated`.
+3. `GET /candidates/{id}/content` returned 11,055 bytes across 388 lines including the
+   generated proxy names.
+4. Publish returned `verified` against the live Mihomo controller.
+5. The temporary subscription was deleted; the only remaining source is the operator's real
+   one.
+
+Also verified: the served shell contains the login gate, the YAML modal, and every new
+counter; `/auth/verify` returns `401` anonymously and `200` with the correct password; the
+overview still reports `v1.19.32` with a live health score.
+
+### Verification
+
+- 4 tests for the content endpoint: byte-exact return, hash-mismatch refusal, unknown id
+  `404`, and auth requirement.
+- `go test ./...`: 76 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green,
+  all shell scripts pass `bash -n`.
+
+### Honest limits
+
+- The deployment VM cannot reach the operator's real subscription host. That is a network
+  property of that host, not a product defect; the same URL works from the operator's
+  Windows machine. Until it is reachable from the VM, candidate builds there will fail at
+  fetch and say so.
+- Duplicate-rule and shadowed-rule detection is still not implemented, and the UI now says
+  so rather than implying it.

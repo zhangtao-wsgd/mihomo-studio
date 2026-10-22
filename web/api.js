@@ -209,6 +209,28 @@
     }).join('') || '<tr><td colspan="6" class="muted" style="padding:22px;text-align:center">后端暂无终端。点击“添加终端”创建第一条记录。</td></tr>';
     tbody.querySelectorAll('[data-edit-terminal]').forEach(b=>b.addEventListener('click',()=>openTerminalByID(b.dataset.editTerminal)));
     tbody.querySelectorAll('[data-delete-terminal]').forEach(b=>b.addEventListener('click',()=>deleteTerminal(b.dataset.deleteTerminal)));
+    // Terminal statistics. "Routable" counts only identities Mihomo can enforce as rules;
+    // MAC and manual identities are inventory-only, so counting them as routable would
+    // overstate what the configuration can actually do.
+    const boundGroups = new Set(state.terminals.map(t => t.proxyGroupId).filter(Boolean));
+    const routable = state.terminals.filter(t => t.identityType === 'source_ip' || t.identityType === 'cidr');
+    const count = $('terminalCount');
+    if (count) count.textContent = String(state.terminals.length);
+    const countFoot = $('terminalCountFoot');
+    if (countFoot) countFoot.textContent = state.terminals.length ? '已保存到后端' : '还没有登记终端';
+    const bound = $('terminalBoundGroups');
+    if (bound) bound.textContent = String(boundGroups.size);
+    const boundFoot = $('terminalBoundGroupsFoot');
+    if (boundFoot) boundFoot.textContent = boundGroups.size ? '不同代理组数量' : '尚未绑定代理组';
+    const routableEl = $('terminalRoutable');
+    if (routableEl) routableEl.textContent = String(routable.length);
+    const routableFoot = $('terminalRoutableFoot');
+    if (routableFoot) {
+      const ledgerOnly = state.terminals.length - routable.length;
+      routableFoot.textContent = ledgerOnly > 0
+        ? '另 ' + ledgerOnly + ' 个为 MAC/手动标识，仅登记不可路由'
+        : '源 IP / CIDR 会生成路由规则';
+    }
   }
   function renderGroups() {
     const container = document.querySelector('#page-groups .card'); if (!container) return;
@@ -230,6 +252,8 @@
     container.querySelectorAll('[data-edit-group]').forEach(b=>b.addEventListener('click',()=>openGroupByID(b.dataset.editGroup)));
     container.querySelectorAll('[data-delete-group]').forEach(b=>b.addEventListener('click',()=>deleteGroup(b.dataset.deleteGroup)));
     groupOptions($('terminalGroup')?.value || ''); ruleTargetOptions($('newRuleTarget')?.value || '');
+    const total = $('groupTotal');
+    if (total) total.textContent = String(state.groups.length);
   }
   function renderRules() {
     const list=$('ruleList'); if (!list) return;
@@ -239,6 +263,16 @@
     }).join('') || '<div class="notice">后端暂无规则。原型中的示例规则不会自动进入正式配置，请通过“新建规则”添加。</div>';
     list.querySelectorAll('[data-edit-rule]').forEach(b=>b.addEventListener('click',()=>openRuleByID(b.dataset.editRule)));
     list.querySelectorAll('[data-delete-rule]').forEach(b=>b.addEventListener('click',()=>deleteRule(b.dataset.deleteRule)));
+    const countLabel = $('ruleCount');
+    if (countLabel) {
+      const enabled = state.rules.filter(r => r.enabled).length;
+      countLabel.textContent = state.rules.length ? `共 ${state.rules.length} 条 · 启用 ${enabled} 条` : '尚未添加规则';
+    }
+    // Rules carry a source field; counting by it is honest because it is persisted data.
+    const bySource = (source) => state.rules.filter(r => r.source === source).length;
+    const custom = $('ruleCountCustom'); if (custom) custom.textContent = bySource('custom') + ' 条';
+    const external = $('ruleCountExternal'); if (external) external.textContent = bySource('external') + ' 条';
+    const builtin = $('ruleCountBuiltin'); if (builtin) builtin.textContent = bySource('built_in') + ' 条';
   }
   function renderSubscriptions() {
     const cards = document.querySelector('#page-subscriptions .card'); if (!cards) return;
@@ -251,6 +285,42 @@
     list.querySelectorAll('[data-history-sub]').forEach(b=>b.addEventListener('click',()=>showSnapshotHistory(b.dataset.historySub)));
     list.querySelectorAll('[data-edit-sub]').forEach(b=>b.addEventListener('click',()=>openSubscriptionByID(b.dataset.editSub)));
     list.querySelectorAll('[data-delete-sub]').forEach(b=>b.addEventListener('click',()=>deleteSubscription(b.dataset.deleteSub)));
+    renderSubscriptionSummary();
+  }
+  // Summarises the most recent fetch attempt. The URL is deliberately not shown in full;
+  // maskURL keeps the host visible so an operator can tell sources apart without exposing
+  // the token path.
+  function renderSubscriptionSummary() {
+    const enabled = state.subscriptions.filter(s => s.enabled).length;
+    const tag = $('enabledSubscriptionsTag');
+    if (tag) {
+      tag.textContent = state.subscriptions.length ? `${enabled} / ${state.subscriptions.length} 个已启用` : '还没有订阅源';
+      tag.className = 'tag ' + (state.subscriptions.length ? 'green' : 'blue');
+    }
+    const body = $('lastFetchBody');
+    const statusTag = $('lastFetchTag');
+    if (!body) return;
+    const fetched = state.subscriptions
+      .filter(s => s.lastFetchAt)
+      .sort((a, b) => new Date(b.lastFetchAt) - new Date(a.lastFetchAt));
+    const latest = fetched[0];
+    if (!latest) {
+      if (statusTag) { statusTag.textContent = '尚无记录'; statusTag.className = 'tag blue'; }
+      body.innerHTML = '<div class="notice">还没有完成过订阅获取。添加订阅后点击「立即刷新」，这里会显示实际结果。</div>';
+      return;
+    }
+    const nodesForSource = state.nodes.filter(n => n.subscriptionId === latest.id).length;
+    const ok = latest.lastStatus === 'fetched';
+    if (statusTag) {
+      statusTag.textContent = ok ? '成功' : (latest.lastStatus || '未知');
+      statusTag.className = 'tag ' + (ok ? 'green' : 'amber');
+    }
+    body.innerHTML =
+      `<div class="summary-line"><span>订阅</span><strong>${esc(latest.name)}</strong></div>`
+      + `<div class="summary-line"><span>最近获取</span><strong>${esc(formatOverviewTime(latest.lastFetchAt))}</strong></div>`
+      + `<div class="summary-line"><span>解析结果</span><strong>${ok ? nodesForSource + ' 个节点' : esc(latest.lastStatus || '未知')}</strong></div>`
+      + `<div class="summary-line"><span>快照节点</span><strong>${nodesForSource} 个</strong></div>`
+      + (ok ? '' : '<div class="notice">本次获取未成功。系统保留了上一次成功快照，但候选构建仍要求所有启用订阅本次获取成功。</div>');
   }
   function maskURL(raw) { try { const u=new URL(raw); return u.origin + u.pathname.replace(/[^/]+$/, '••••••••'); } catch (_) { return '已保存的订阅地址'; } }
   async function refreshAll() {
@@ -320,6 +390,29 @@ ${result.limitations}`);
     try { const result=await request(`${API}/subscriptions/${id}/refresh`,{method:'POST',body:JSON.stringify({})}); await refreshAll(); toast(`订阅刷新成功：${result.proxyCount} 个节点。快照已更新，运行配置未发布。`); }
     catch(e) { await refreshAll(); toast(`订阅刷新失败，旧的成功快照会保留：${e.message}`); }
   }
+  // Refreshing each enabled source in turn rather than in parallel: the sources share one
+  // SQLite connection, and a failed source must not be hidden behind a concurrent success.
+  window.refreshAllSubscriptions = async function refreshAllSubscriptions() {
+    const targets = state.subscriptions.filter(s => s.enabled);
+    if (!targets.length) return toast('没有已启用的订阅可刷新。');
+    if (!confirm(`依次刷新 ${targets.length} 个已启用订阅？这只会更新输入快照，不会发布运行配置。`)) return;
+    const failures = [];
+    let okCount = 0;
+    for (const s of targets) {
+      try {
+        await request(`${API}/subscriptions/${s.id}/refresh`, { method:'POST', body: JSON.stringify({}) });
+        okCount += 1;
+      } catch (e) {
+        failures.push(s.name + '：' + e.message);
+      }
+    }
+    await refreshAll();
+    if (failures.length) {
+      toast(`刷新完成：${okCount} 个成功，${failures.length} 个失败。失败的订阅会保留上一次成功快照。`);
+    } else {
+      toast(`全部 ${okCount} 个订阅刷新成功。快照已更新，运行配置未发布。`);
+    }
+  };
   function openTerminalByID(id) {
     const t=state.terminals.find(x=>x.id===id); if(!t) return;
     state.editingTerminalId=id; $('terminalModalTitle').textContent='编辑终端：'+t.name; $('terminalName').value=t.name;
@@ -387,11 +480,18 @@ ${result.limitations}`);
     const button=document.querySelectorAll('#page-releases button[onclick="createPreview()"]'); button.forEach(b=>b.disabled=true);
     try {
       const candidate=await request(`${API}/config-candidates`,{method:'POST',body:JSON.stringify({})}); state.candidate=candidate;
-      $('releaseEmpty').style.display='none'; $('releasePreview').style.display='block'; $('releaseStateTag').textContent=candidate.status==='validated'?'候选已校验':'校验未通过'; $('releaseStateTag').className='tag '+(candidate.status==='validated'?'green':'amber');
-      $('releasePreview').querySelector('.stat-value').textContent=candidate.id;
-      const notices=$('releasePreview').querySelectorAll('.notice'); if(notices.length) notices[notices.length-1].innerHTML=`候选 SHA-256：<b>${esc(candidate.sha256)}</b><br>输入指纹：<b>${esc(candidate.sourceFingerprint)}</b><br>校验状态：<b>${esc(candidate.status)}</b> · ${esc(candidate.validationMessage||'校验通过')}`;
-      $('confirmRelease').textContent=candidate.id; toast(candidate.status==='validated'?'候选配置已生成并通过内核校验':'候选已生成，但校验未通过：'+candidate.validationMessage);
-      $('step1').className='step done'; $('step1').querySelector('.step-num').textContent='✓'; $('step2').className='step '+(candidate.status==='validated'?'done':'current'); $('step2').querySelector('.step-num').textContent=candidate.status==='validated'?'✓':'!';
+      $('releaseEmpty').style.display='none'; $('releasePreview').style.display='block';
+      $('releaseStateTag').textContent=candidate.status==='validated'?'候选已校验':'校验未通过';
+      $('releaseStateTag').className='tag '+(candidate.status==='validated'?'green':'red');
+      // Pull the same health checks the overview uses so the preview and the dashboard cannot
+      // disagree about whether this configuration is publishable.
+      let health = null;
+      try { const overview = await request(`${API}/overview`); health = overview.health; } catch (_) { health = null; }
+      renderReleasePreview(candidate, health);
+      const confirmRelease = $('confirmRelease'); if (confirmRelease) confirmRelease.textContent = candidate.id;
+      toast(candidate.status==='validated'?'候选配置已生成并通过内核校验':'候选已生成，但校验未通过：'+(candidate.validationMessage||''));
+      $('step1').className='step done'; $('step1').querySelector('.step-num').textContent='✓';
+      $('step2').className='step '+(candidate.status==='validated'?'done':'current'); $('step2').querySelector('.step-num').textContent=candidate.status==='validated'?'✓':'!';
       { const confirmButton=$('releasePreview').querySelector('button[onclick="confirmPublish()"]'); if(confirmButton) confirmButton.disabled=candidate.status!=='validated'; }
     } catch(e) { toast('候选生成失败：'+e.message); }
     finally { button.forEach(b=>b.disabled=false); }
@@ -577,6 +677,77 @@ ${result.limitations}`);
       const box = $('overviewRelease');
       if (box) box.innerHTML = '<div class="notice">无法读取总览数据：' + esc(e.message) + '</div>';
       return false;
+    }
+  }
+  // The YAML viewer shows exactly what a candidate would write to the runtime. The server
+  // verifies the snapshot hash before returning it, so a tampered file is reported instead
+  // of being displayed as authoritative.
+  window.viewCandidateYaml = async function viewCandidateYaml(candidateId) {
+    if (!candidateId) return toast('还没有生成候选配置。');
+    try {
+      const payload = await request(`${API}/config-candidates/${candidateId}/content`);
+      const title = $('yamlModalTitle');
+      const desc = $('yamlModalDesc');
+      const meta = $('yamlModalMeta');
+      const body = $('yamlModalBody');
+      if (title) title.textContent = '候选配置 YAML · ' + payload.id;
+      if (desc) desc.textContent = '这是该候选在发布时会写入运行实例的精确内容。';
+      if (meta) meta.innerHTML = `SHA-256 <b>${esc(payload.sha256)}</b> · 状态 <b>${esc(payload.status)}</b><br>${esc(payload.validationMessage || '')}`;
+      if (body) body.textContent = payload.content;
+      openModal('yamlModal');
+    } catch (e) {
+      toast('无法读取候选配置：' + e.message);
+    }
+  };
+  // Opens the YAML of whichever candidate is currently verified as in effect.
+  window.viewActiveYaml = async function viewActiveYaml() {
+    try {
+      const payload = await request(`${API}/deployments?limit=20&status=verified`);
+      const latest = (payload.items || [])[0];
+      if (!latest) return toast('还没有已核验的发布，无法查看生效配置。');
+      await viewCandidateYaml(latest.candidateId);
+    } catch (e) {
+      toast('无法读取生效配置：' + e.message);
+    }
+  };
+  // The release preview renders the candidate the server actually produced. It previously
+  // showed invented check rows and a fabricated diff, which misrepresented what would ship.
+  function renderReleasePreview(candidate, health) {
+    const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+    setText('previewCandidateId', candidate.id);
+    setText('previewCandidateSha', (candidate.sha256 || '').slice(0, 12) + '…');
+    setText('previewCandidateStatus', candidate.status === 'validated' ? '已校验' : candidate.status);
+
+    const summary = $('previewCheckSummary');
+    if (summary) {
+      const blockers = health ? (health.blockers || 0) : 0;
+      const warnings = health ? (health.warnings || 0) : 0;
+      summary.innerHTML = `<span class="tag ${blockers ? 'red' : 'green'}">BLOCK ${blockers}</span> <span class="tag amber">WARN ${warnings}</span>`;
+    }
+
+    const checks = $('previewChecks');
+    if (checks) {
+      const items = (health && health.checks) || [];
+      const kernelOk = candidate.status === 'validated';
+      let rows = `<div class="check-item"><div class="check-mark ${kernelOk ? '' : 'warn'}">${kernelOk ? '✓' : '!'}</div>`
+        + `<div class="check-copy"><strong>${kernelOk ? 'Mihomo 内核校验通过' : '内核校验未通过'}</strong>`
+        + `<p>${esc(candidate.validationMessage || '')}</p></div>`
+        + `<span class="tag ${kernelOk ? 'green' : 'red'}">${kernelOk ? 'PASS' : 'FAIL'}</span></div>`;
+      rows += items.map(c => {
+        const ok = c.severity === 'ok';
+        const warn = c.severity === 'warn';
+        return `<div class="check-item"><div class="check-mark ${ok ? '' : 'warn'}">${ok ? '✓' : '!'}</div>`
+          + `<div class="check-copy"><strong>${esc(c.title)}</strong><p>${esc(c.detail)}</p></div>`
+          + `<span class="tag ${ok ? 'green' : warn ? 'amber' : 'red'}">${ok ? 'PASS' : warn ? 'WARN' : 'BLOCK'}</span></div>`;
+      }).join('');
+      checks.innerHTML = rows;
+    }
+
+    const meta = $('previewMeta');
+    if (meta) {
+      meta.innerHTML = `候选 SHA-256：<b>${esc(candidate.sha256 || '')}</b><br>`
+        + `输入指纹：<b>${esc(candidate.sourceFingerprint || '')}</b><br>`
+        + `校验状态：<b>${esc(candidate.status)}</b> · 预览后输入发生变化时必须重新生成候选。`;
     }
   }
   // Deployment history is read from the backend so the release center reflects what was

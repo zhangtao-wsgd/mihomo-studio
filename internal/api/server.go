@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/config-candidates", s.buildCandidate)
 	mux.HandleFunc("GET /api/v1/config-candidates/{id}", s.getCandidate)
 	mux.HandleFunc("GET /api/v1/config-candidates/{id}/inputs", s.getCandidateInputs)
+	mux.HandleFunc("GET /api/v1/config-candidates/{id}/content", s.getCandidateContent)
 	mux.HandleFunc("POST /api/v1/config-candidates/{id}/publish", s.publishCandidate)
 	mux.HandleFunc("GET /api/v1/deployments", s.listDeployments)
 	mux.HandleFunc("GET /api/v1/deployments/{id}", s.getDeployment)
@@ -441,6 +444,43 @@ func (s *Server) getCandidateInputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, inputs)
+}
+
+// getCandidateContent returns the exact YAML bytes of an immutable candidate.
+//
+// The operator needs to see what will actually be written to the runtime before confirming a
+// publish; without this the only way to inspect a candidate would be the filesystem. The
+// response is the raw document, and its hash is compared against the recorded SHA-256 so a
+// tampered or truncated snapshot is reported rather than displayed as authoritative.
+func (s *Server) getCandidateContent(w http.ResponseWriter, r *http.Request) {
+	candidate, err := s.Workflow.Candidate(r.Context(), r.PathValue("id"))
+	if err != nil {
+		status := 500
+		if strings.Contains(err.Error(), "not found") {
+			status = 404
+		}
+		fail(w, status, err)
+		return
+	}
+	body, err := os.ReadFile(candidate.SnapshotPath)
+	if err != nil {
+		fail(w, 500, fmt.Errorf("read candidate snapshot: %w", err))
+		return
+	}
+	digest := sha256.Sum256(body)
+	actual := hex.EncodeToString(digest[:])
+	if actual != candidate.SHA256 {
+		// Refuse to present unverified content as the candidate; the mismatch is the finding.
+		fail(w, 500, fmt.Errorf("candidate snapshot hash mismatch: recorded %s, actual %s", candidate.SHA256, actual))
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"id":                candidate.ID,
+		"sha256":            candidate.SHA256,
+		"status":            candidate.Status,
+		"validationMessage": candidate.ValidationMessage,
+		"content":           string(body),
+	})
 }
 
 func (s *Server) publishCandidate(w http.ResponseWriter, r *http.Request) {
