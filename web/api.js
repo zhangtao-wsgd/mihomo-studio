@@ -566,9 +566,9 @@ ${result.limitations}`);
       // The recorded history is the source of truth, so re-read it rather than assuming.
       await loadDeployments();
       await loadOverview();
-    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); await loadDeployments(); await loadOverview(); }
+    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); await loadDeployments({ reset: true }); await loadOverview(); }
   };
-  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); await loadDeployments(); await loadOverview(); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
+  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); await loadDeployments({ reset: true }); await loadOverview(); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
   // The overview is assembled server-side so the dashboard reflects one consistent read
   // instead of six requests that can disagree with each other.
   const healthGradeMeta = {
@@ -845,7 +845,7 @@ ${result.limitations}`);
     }
     container.innerHTML = items.map((d, index) => {
       const meta = deploymentStatusMeta[d.status] || { label: d.status, tag:'amber', icon:'·' };
-      const isCurrent = index === 0 && d.status === 'verified';
+      const isCurrent = deploymentOffset === 0 && index === 0 && d.status === 'verified';
       const sha = (d.candidateSha256 || '').slice(0, 12);
       const opLabel = d.operation === 'rollback' ? '回滚发布' : '发布';
       // Rollback needs two recorded facts: this deployment was verified, and a previously
@@ -863,37 +863,128 @@ ${result.limitations}`);
       return `<div class="event"><div class="event-icon" style="background:${meta.tag==='green'?'#e5f8ef':meta.tag==='red'?'#fff0f0':'#eef2ff'};color:${meta.tag==='green'?'#159a72':meta.tag==='red'?'#d14343':'#4169e1'}">${meta.icon}</div>`
         + `<div class="event-body"><div class="event-title">${esc(d.candidateId)} <span class="tag ${meta.tag}">${esc(meta.label)}</span>${isCurrent?' <span class="tag green">当前生效</span>':''}${d.operation==='rollback'?' <span class="tag blue">rollback</span>':''}</div>`
         + `<div class="event-sub">${esc(opLabel)} · SHA ${esc(sha)}${sha?'…':''}</div>`
-        + `<div class="event-sub">${esc(d.runtimeMessage || '')}</div>${action}</div>`
+        + `<div class="event-sub">${esc(d.runtimeMessage || '')}</div>${action}`
+        + `<button class="btn btn-secondary" style="margin-top:7px;padding:5px 8px" data-deployment-events="${esc(d.id)}">查看操作事件</button>`
+        + `<div class="event-sub" data-deployment-events-container hidden></div></div>`
         + `<div class="event-time">${formatDeploymentTime(d.startedAt)}</div></div>`;
     }).join('');
     container.querySelectorAll('[data-rollback]').forEach(button => {
       button.addEventListener('click', () => rollbackDeployment(button.dataset.rollback));
     });
+    container.querySelectorAll('[data-deployment-events]').forEach(button => {
+      button.addEventListener('click', () => toggleDeploymentEvents(button));
+    });
   }
-  // loadDeployments is called on demand and after any publish so the panel never shows a
-  // stale record set.
-  window.loadDeployments = async function loadDeployments() {
+  async function toggleDeploymentEvents(button) {
+    const row = button.closest('.event');
+    const panel = row && row.querySelector('[data-deployment-events-container]');
+    if (!panel) return;
+    if (!panel.hidden) {
+      panel.hidden = true;
+      button.textContent = '查看操作事件';
+      return;
+    }
+    panel.hidden = false;
+    button.textContent = '收起操作事件';
+    if (panel.dataset.loaded === 'true') return;
+    panel.textContent = '正在读取事件…';
     try {
-      const payload = await request(`${API}/deployments?limit=20`);
-      renderDeployments(payload);
-      const notice = $('deploymentHistoryNotice');
-      if (notice && payload.total > payload.items.length) {
-        notice.textContent = `共 ${payload.total} 条发布记录，当前显示最近 ${payload.items.length} 条。`;
+      const payload = await request(`${API}/deployments/${encodeURIComponent(button.dataset.deploymentEvents)}/events`);
+      const events = payload.items || [];
+      panel.innerHTML = events.length ? events.map(event =>
+        `<div style="padding:7px 0;border-top:1px solid var(--border)">`
+        + `<strong>${esc(event.action || '未知操作')}</strong> · ${esc(event.outcome || '状态未知')}`
+        + `<div>${esc(formatDeploymentTime(event.createdAt))} · ${esc(event.resourceType || '')} / ${esc(event.resourceId || '')}</div>`
+        + (event.detailJson ? `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0">${esc(event.detailJson)}</pre>` : '')
+        + `</div>`
+      ).join('') : '该发布记录没有关联的操作事件。';
+      panel.dataset.loaded = 'true';
+    } catch (error) {
+      panel.textContent = '读取操作事件失败：' + error.message;
+    }
+  }
+  // Keep pagination state explicit so large histories remain bounded and navigable.
+  const deploymentPageSize = 20;
+  let deploymentOffset = 0;
+  let deploymentRequestSequence = 0;
+  let deploymentLoading = false;
+  function renderDeploymentPagination(payload) {
+    const total = Number(payload.total) || 0;
+    const limit = Number(payload.limit) || deploymentPageSize;
+    const offset = Number(payload.offset) || 0;
+    const pageInfo = $('deploymentPageInfo');
+    const previous = $('deploymentPrevPage');
+    const next = $('deploymentNextPage');
+    if (pageInfo) pageInfo.textContent = deploymentLoading
+      ? '正在读取发布记录…'
+      : total === 0 ? '共 0 条发布记录'
+      : `显示第 ${offset + 1}–${Math.min(offset + (payload.items || []).length, total)} 条，共 ${total} 条`;
+    if (previous) previous.disabled = deploymentLoading || offset <= 0;
+    if (next) next.disabled = deploymentLoading || offset + limit >= total;
+    const notice = $('deploymentHistoryNotice');
+    if (notice) notice.textContent = '回滚会创建新的发布记录，不会删除历史。未知或未经核验的结果不会提供自动回滚。';
+  }
+  function setDeploymentLoading(loading) {
+    deploymentLoading = loading;
+    const previous = $('deploymentPrevPage');
+    const next = $('deploymentNextPage');
+    if (previous) previous.disabled = loading || deploymentOffset <= 0;
+    if (next) next.disabled = loading;
+    const pageInfo = $('deploymentPageInfo');
+    if (loading && pageInfo) pageInfo.textContent = '正在读取发布记录…';
+  }
+  window.loadDeployments = async function loadDeployments(options = {}) {
+    const requestSequence = ++deploymentRequestSequence;
+    let requestedOffset = options.reset ? 0
+      : Number.isInteger(options.offset) && options.offset >= 0 ? options.offset
+      : deploymentOffset;
+    setDeploymentLoading(true);
+    try {
+      let payload = await request(`${API}/deployments?limit=${deploymentPageSize}&offset=${requestedOffset}`);
+      // If history shrank while this page was open, move to the last valid page.
+      if (requestedOffset > 0 && payload.total <= requestedOffset) {
+        requestedOffset = Math.max(0, Math.floor(Math.max(0, payload.total - 1) / deploymentPageSize) * deploymentPageSize);
+        payload = await request(`${API}/deployments?limit=${deploymentPageSize}&offset=${requestedOffset}`);
       }
+      if (requestSequence !== deploymentRequestSequence) return;
+      deploymentOffset = requestedOffset;
+      renderDeployments(payload);
+      setDeploymentLoading(false);
+      renderDeploymentPagination(payload);
     } catch (e) {
+      if (requestSequence !== deploymentRequestSequence) return;
+      setDeploymentLoading(false);
       const container = $('deploymentHistory');
       if (container) container.innerHTML = `<div class="event"><div class="event-body"><div class="event-title">无法读取发布记录</div><div class="event-sub">${esc(e.message)}</div></div></div>`;
+      const pageInfo = $('deploymentPageInfo');
+      const previous = $('deploymentPrevPage');
+      const next = $('deploymentNextPage');
+      if (pageInfo) pageInfo.textContent = '读取失败，当前页码已保留；可刷新重试。';
+      if (previous) previous.disabled = deploymentOffset <= 0;
+      if (next) next.disabled = true;
     }
   };
+  document.addEventListener('DOMContentLoaded', () => {
+    const previous = $('deploymentPrevPage');
+    const next = $('deploymentNextPage');
+    if (previous) previous.addEventListener('click', () => {
+      if (deploymentLoading || deploymentOffset <= 0) return;
+      window.loadDeployments({ offset: Math.max(0, deploymentOffset - deploymentPageSize) });
+    });
+    if (next) next.addEventListener('click', () => {
+      if (deploymentLoading) return;
+      window.loadDeployments({ offset: deploymentOffset + deploymentPageSize });
+    });
+  });
   async function rollbackDeployment(deploymentId) {
     if (!confirm('确认回滚到这个发布？系统会用它记录的上一版已核验候选重新发布，并新增一条发布记录；历史不会被删除。')) return;
     try {
       const result = await request(`${API}/deployments/${deploymentId}/rollback`, { method:'POST', body: JSON.stringify({ confirm:true }) });
       toast(`回滚结果：${result.status}。${result.runtimeMessage || ''}`);
-      await loadDeployments();
+      await loadDeployments({ reset: true });
     } catch (e) {
       toast('回滚未完成：' + e.message + '。请检查发布记录，不要盲目重复操作。');
-      await loadDeployments();
+      await loadDeployments({ reset: true });
     }
   }
   window.rollback = function(version) { toast('请从下方「版本历史」中选择真实发布记录进行回滚；演示标签不能用于回滚。'); };

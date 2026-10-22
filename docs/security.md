@@ -7,7 +7,7 @@ bind address.
 
 | Surface | Default binding | Protection |
 |---|---|---|
-| Studio control API (`8080`) | `127.0.0.1` | `MIHOMO_SECRET` via `X-Admin-Token`, when set. See below. |
+| Studio control API (`8080`) | `0.0.0.0` (LAN-accessible) | Required `MIHOMO_SECRET` via `X-Admin-Token`. |
 | Mihomo controller (`9090`) | `127.0.0.1` | `MIHOMO_SECRET` bearer token. |
 | Proxy listener (`7890`) | `127.0.0.1` | None — it is the proxy itself. |
 
@@ -33,9 +33,10 @@ would look like protection while providing none.
 
 | Situation | Behaviour |
 |---|---|
-| `MIHOMO_SECRET` set | Every `/api/v1/*` request except `/auth/status` must present the header. |
-| `MIHOMO_SECRET` unset, listener is loopback | Allowed to start unauthenticated, with a startup warning. |
-| `MIHOMO_SECRET` unset, listener is not loopback | **Refuses to start** with an actionable error. |
+| `MIHOMO_SECRET` is a valid configured secret | Every protected API request must present the header. |
+| Secret is missing, a known placeholder, or shorter than 32 characters in Compose | **Bootstrap refuses to start** with an actionable error. |
+| Secret is unset when running the binary directly, listener is loopback | Allowed to start unauthenticated, with a startup warning. |
+| Secret is unset when running the binary directly, listener is not loopback | **Refuses to start** with an actionable error. |
 
 `0.0.0.0`, `:8080`, and any routable address count as non-loopback. An unparseable
 `LISTEN_ADDR` is also treated as non-loopback, so a typo fails closed rather than quietly
@@ -59,8 +60,10 @@ This is a trusted-LAN access control, not a multi-user authentication system:
 - Compromising the browser's `sessionStorage` grants access until the tab closes.
 
 ## What a LAN binding means
-Setting `STUDIO_BIND_IP` or `CONTROLLER_BIND_IP` to a LAN address changes the exposure in a
-way that is easy to underestimate:
+Studio defaults to `0.0.0.0:8080` so devices on the LAN can reach the management UI.
+Set `STUDIO_BIND_IP=127.0.0.1` to opt back into host-only access, or set a specific host
+interface address to bind only that interface. The controller and proxy listener still
+default to loopback. A LAN binding changes exposure in a way that is easy to underestimate:
 
 - **Studio on the LAN** lets anyone holding `MIHOMO_SECRET` read your configuration, read
   subscription URLs, create or delete proxy groups, terminals, and rules, build candidates,

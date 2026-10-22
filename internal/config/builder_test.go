@@ -1,8 +1,17 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"mihomo-studio/internal/domain"
+	"mihomo-studio/internal/store"
 )
 
 func TestIsPublicAddress(t *testing.T) {
@@ -87,5 +96,70 @@ func TestCorsOriginsUsesConfiguredList(t *testing.T) {
 		if got[i] != configured[i] {
 			t.Fatalf("corsOrigins() = %v, want %v", got, configured)
 		}
+	}
+}
+
+func TestBuildFailurePreservesCurrentSubscriptionSnapshot(t *testing.T) {
+	cases := []struct {
+		name       string
+		fetchBody  []byte
+		fetchErr   error
+		wantStatus string
+	}{
+		{name: "network failure", fetchErr: errors.New("provider unavailable"), wantStatus: "fetch_failed"},
+		{name: "invalid subscription payload", fetchBody: []byte("not a valid proxy subscription"), wantStatus: "parse_failed"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := store.Open(filepath.Join(t.TempDir(), "studio.db"))
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			defer st.DB.Close()
+
+			sub := domain.Subscription{
+				ID: "primary", Name: "Primary", URL: "https://subscription.example/sub.yaml",
+				Enabled: true, LastStatus: "fetched",
+			}
+			if err := st.SaveSubscription(ctx, sub); err != nil {
+				t.Fatalf("save subscription: %v", err)
+			}
+
+			snapshotPath := filepath.Join(t.TempDir(), "previous.yaml")
+			if err := os.WriteFile(snapshotPath, []byte("proxies:\n  - name: old-node\n"), 0o600); err != nil {
+				t.Fatalf("write previous snapshot: %v", err)
+			}
+			oldHash := strings.Repeat("a", 64)
+			builder := &Builder{DB: st.DB, SnapshotDir: t.TempDir(), ControllerSecret: "test-secret"}
+			if err := builder.recordCurrentSnapshot(ctx, sub.ID, oldHash, snapshotPath, time.Now().UTC().Format(time.RFC3339Nano), 1); err != nil {
+				t.Fatalf("seed previous snapshot: %v", err)
+			}
+			builder.fetch = func(context.Context, string) ([]byte, error) {
+				return tc.fetchBody, tc.fetchErr
+			}
+
+			if _, err := builder.Build(ctx); err == nil {
+				t.Fatal("Build succeeded; expected subscription refresh failure")
+			}
+
+			var currentHash, currentPath string
+			var current int
+			if err := st.DB.QueryRowContext(ctx, `SELECT content_sha256,snapshot_path,is_current FROM subscription_snapshots WHERE subscription_id=? AND is_current=1`, sub.ID).Scan(&currentHash, &currentPath, &current); err != nil {
+				t.Fatalf("read current snapshot: %v", err)
+			}
+			if currentHash != oldHash || currentPath != snapshotPath || current != 1 {
+				t.Fatalf("current snapshot changed after failed refresh: hash=%q path=%q current=%d", currentHash, currentPath, current)
+			}
+
+			var gotStatus string
+			if err := st.DB.QueryRowContext(ctx, `SELECT last_status FROM subscriptions WHERE id=?`, sub.ID).Scan(&gotStatus); err != nil {
+				t.Fatalf("read subscription status: %v", err)
+			}
+			if gotStatus != tc.wantStatus {
+				t.Errorf("last status = %q, want %q", gotStatus, tc.wantStatus)
+			}
+		})
 	}
 }
