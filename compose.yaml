@@ -10,6 +10,16 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
+        case "$MIHOMO_SECRET" in
+          ""|replace-with-a-long-random-secret)
+            echo "MIHOMO_SECRET is a placeholder. Set a unique random secret in .env (for example: openssl rand -hex 32)." >&2
+            exit 1
+            ;;
+        esac
+        if [ "${#MIHOMO_SECRET}" -lt 32 ]; then
+          echo "MIHOMO_SECRET must contain at least 32 characters." >&2
+          exit 1
+        fi
         mkdir -p /runtime/active
         if [ ! -s /runtime/active/config.yaml ]; then
           umask 027
@@ -36,10 +46,9 @@ services:
       # the loopback defaults.
       DASHBOARD_ORIGINS: ${DASHBOARD_ORIGINS:-}
     ports:
-      # Loopback by default. Set STUDIO_BIND_IP to bind the control UI to a LAN address.
-      # The control API has no authentication yet, so a LAN binding lets anyone on that
-      # network change configuration and publish it. See docs/security.md.
-      - "${STUDIO_BIND_IP:-127.0.0.1}:8080:8080"
+      # LAN-accessible by default; the API requires MIHOMO_SECRET. Restrict this port
+      # with the host firewall if the subnet contains untrusted devices.
+      - "${STUDIO_BIND_IP:-0.0.0.0}:8080:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
       interval: 15s
