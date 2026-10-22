@@ -273,6 +273,32 @@
     const custom = $('ruleCountCustom'); if (custom) custom.textContent = bySource('custom') + ' 条';
     const external = $('ruleCountExternal'); if (external) external.textContent = bySource('external') + ' 条';
     const builtin = $('ruleCountBuiltin'); if (builtin) builtin.textContent = bySource('built_in') + ' 条';
+    loadRuleConflicts();
+  }
+  // Rule order analysis is read-only: it reports what cannot match and leaves the fix to the
+  // operator, because reordering rules automatically could change routing intent.
+  async function loadRuleConflicts() {
+    const container = $('ruleConflicts');
+    const tag = $('ruleConflictTag');
+    if (!container) return;
+    try {
+      const analysis = await request(`${API}/rules/conflicts`);
+      const conflicts = analysis.conflicts || [];
+      if (tag) {
+        tag.textContent = conflicts.length ? `发现 ${conflicts.length} 处` : `已检查 ${analysis.checked} 条`;
+        tag.className = 'tag ' + (conflicts.length ? 'amber' : 'green');
+        tag.title = analysis.limitations || '';
+      }
+      container.innerHTML = conflicts.length ? conflicts.map(c => {
+        const kindLabel = c.kind === 'duplicate' ? '重复' : c.kind === 'shadowed' ? '被遮蔽' : '源网段重叠';
+        return `<div class="notice" style="margin:0 0 8px;background:#fff8e8;border-color:#f2dfb7;color:#805b18">`
+          + `<strong>[${kindLabel}] ${esc(c.name)}</strong><br>${esc(c.detail)}</div>`;
+      }).join('') + `<div class="muted tiny" style="margin-top:6px">${esc(analysis.limitations || '')}</div>`
+        : `<div class="notice" style="margin:0">未发现被前序规则完全覆盖的规则。<br><span class="muted tiny">${esc(analysis.limitations || '')}</span></div>`;
+    } catch (e) {
+      if (tag) { tag.textContent = '读取失败'; tag.className = 'tag amber'; }
+      container.innerHTML = `<div class="notice">无法读取规则顺序检查结果：${esc(e.message)}</div>`;
+    }
   }
   function renderSubscriptions() {
     const cards = document.querySelector('#page-subscriptions .card'); if (!cards) return;

@@ -195,6 +195,40 @@ func TestComputeHealthGradeBoundaries(t *testing.T) {
 	}
 }
 
+// A rule that can never match does not stop a publish, so it must warn rather than block.
+func TestComputeHealthRuleConflictsWarn(t *testing.T) {
+	input := healthyInput()
+	input.RuleAnalysis = RuleAnalysis{
+		Checked: 2,
+		Conflicts: []RuleConflict{{
+			Kind: ConflictShadowed, RuleID: "r2", Name: "被遮蔽的规则", Severity: "warn",
+		}},
+	}
+	health := ComputeHealth(input)
+	check := findCheck(t, health, "rule_conflicts")
+	if check.Severity != "warn" || check.Deduction != healthWeightRuleConflicts {
+		t.Fatalf("unexpected check: %+v", check)
+	}
+	if health.Grade == "blocked" {
+		t.Fatalf("rule conflicts alone must not block: grade=%s", health.Grade)
+	}
+	if health.Score != 95 {
+		t.Fatalf("score=%d, want 95", health.Score)
+	}
+}
+
+func TestComputeHealthNoRuleConflictsIsOk(t *testing.T) {
+	input := healthyInput()
+	input.RuleAnalysis = RuleAnalysis{Checked: 1}
+	health := ComputeHealth(input)
+	if check := findCheck(t, health, "rule_conflicts"); check.Severity != "ok" {
+		t.Fatalf("unexpected check: %+v", check)
+	}
+	if health.Score != 100 {
+		t.Fatalf("score=%d, want 100", health.Score)
+	}
+}
+
 func findCheck(t *testing.T, health Health, id string) HealthCheck {
 	t.Helper()
 	for _, check := range health.Checks {

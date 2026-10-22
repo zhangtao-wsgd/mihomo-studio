@@ -84,7 +84,10 @@ type Overview struct {
 	Subscriptions    []SubscriptionSummary `json:"subscriptions"`
 	Config           ConfigPaths           `json:"config"`
 	Auth             AuthSummary           `json:"auth"`
-	GeneratedAt      string                `json:"generatedAt"`
+	// RuleConflicts lists rules an earlier rule makes unreachable. The health check only
+	// summarises them, so the detail is exposed here as well.
+	RuleConflicts RuleAnalysis `json:"ruleConflicts"`
+	GeneratedAt   string       `json:"generatedAt"`
 }
 
 // DeploymentSummary is the projection of a deployment the dashboard shows.
@@ -287,7 +290,12 @@ func (b *Builder) BuildOverview(ctx context.Context, activeConfigPath string, au
 		Nodes:                nodes,
 		Groups:               healthGroups,
 		Rules:                healthRules,
+		// Computed from the same persisted rules the health checks already read, so the
+		// dashboard and the rules page cannot disagree about which rules are unreachable.
+		RuleAnalysis:         AnalyzeRules(rules),
 		UncertainDeployments: overview.Counts.UncertainDeployments,
 	})
+	// Expose the findings directly too; the health check only summarises them.
+	overview.RuleConflicts = AnalyzeRules(rules)
 	return overview, nil
 }

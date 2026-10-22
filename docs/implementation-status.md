@@ -653,3 +653,104 @@ overview still reports `v1.19.32` with a live health score.
   fetch and say so.
 - Duplicate-rule and shadowed-rule detection is still not implemented, and the UI now says
   so rather than implying it.
+
+## Rule order analysis increment
+
+The rules page previously told operators that duplicate and shadowed-rule detection was not
+implemented. It is now implemented, so that statement was replaced with the real capability.
+
+### New endpoint
+
+`GET /api/v1/rules/conflicts` returns:
+
+```json
+{
+  "conflicts": [
+    {"kind": "shadowed", "ruleId": "...", "name": "...", "conflictsWith": "...",
+     "severity": "warn", "detail": "..."}
+  ],
+  "checked": 2,
+  "limitations": "..."
+}
+```
+
+Kinds are `duplicate` (same type, value, and target as an earlier rule), `shadowed` (an
+earlier rule matches a strict superset), and `cidr_overlap` (two `SRC-IP-CIDR` rules cover
+overlapping sources with different targets).
+
+### What it compares, and what it refuses to guess
+
+Only relationships provable from the two rule types are reported:
+
+- identical type and value are duplicate or shadowing depending on the target
+- `DOMAIN-KEYWORD` covers later `DOMAIN`, `DOMAIN-SUFFIX`, and `DOMAIN-KEYWORD` rules whose
+  value contains the keyword
+- `DOMAIN-SUFFIX` covers the bare domain and every subdomain, so `example.com` shadows
+  `api.example.com` but not `notexample.com`
+- `IP-CIDR`/`IP-CIDR6` cover a later network when the earlier prefix is no narrower and
+  contains both ends of the later one
+
+GeoIP, GeoSite, `PROCESS-*`, port, and `RULE-SET` rules are **not** compared. Their match
+sets depend on external databases or details the analysis does not have, so claiming one
+shadows another would be a guess. The response states this in `limitations`, and the UI shows
+that text under the findings.
+
+Rules are evaluated in the order Mihomo receives them — ascending priority, then ascending
+ID — so input order cannot produce a false result.
+
+### Severity is `warn`, deliberately
+
+A shadowed or overlapping rule still produces a **valid, publishable** configuration. Only
+conditions that make the configuration invalid block a publish, and the candidate builder
+already catches those. An early draft of this analysis marked CIDR overlap as `block`; that
+was corrected before completion because it overstated the consequence.
+
+The overview health score gains a `rule_conflicts` check worth −5 when findings exist. It
+cannot lower the grade to `blocked` on its own.
+
+### UI
+
+The rules page gained a 规则顺序检查 panel listing each finding with its kind, the offending
+rule, and an explanation naming the earlier rule responsible. The panel also renders the
+`limitations` text, so the absence of a finding is not read as proof that the rule set is
+perfectly ordered.
+
+### Verified on the deployed stack
+
+1. Baseline: `checked=0 conflicts=0`.
+2. Created a broad `DOMAIN-SUFFIX,shadow-test.example → DIRECT` rule at priority 10 and a
+   narrow `DOMAIN,api.shadow-test.example → REJECT` at priority 20.
+3. Analysis reported one `shadowed` finding explaining that the earlier rule covers
+   `shadow-test.example` and all its subdomains, so the narrow rule never matches.
+4. `GET /overview` showed `rule_conflicts` at `warn`, deduction 5, count 1, and included the
+   detail under `ruleConflicts`.
+5. Both verification rules were deleted; analysis returned to `checked=0 conflicts=0`.
+
+### Verification
+
+- 13 analysis tests: duplicate versus shadowed, keyword coverage, suffix versus subdomain
+  (including the `notexample.com` false-positive guard), CIDR containment, a later broader
+  CIDR staying reachable, effective order over input order, source-route overlap with the
+  same and different targets, disabled rules ignored, opaque rule types producing no claims,
+  and empty input returning `[]`.
+- 2 health tests: conflicts warn without blocking, and no conflicts reports `ok`.
+- 4 API tests: empty result is `[]`, a real shadowed pair is reported with both IDs,
+  the endpoint does not mutate stored rules, and it requires auth.
+- `go test ./...`: 94 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green.
+
+### Documentation encoding incident
+
+`docs/api.md` and `README.md` were corrupted in earlier commits: a PowerShell
+`Get-Content -Raw` / `WriteAllText` round trip read UTF-8 as the local ANSI code page, so a
+Chinese section in each file was double-encoded. `docs/api.md` was corrupted from `25679b4`
+and `README.md` from `1682dd4`; both were pushed in that state.
+
+They are repaired in this increment by rewriting the affected regions from known-correct
+literals, with the repair script asserting on anchors before editing. All subsequent edits use
+UTF-8-aware tools. The rule adopted after this is: never round-trip a file with non-ASCII
+content through PowerShell text cmdlets.
+
+### Still open
+
+- Subscription-supplied rule import is still not implemented, and the UI says so.
+- CSRF tokens, per-user accounts, and TLS remain outstanding.

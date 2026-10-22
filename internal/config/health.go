@@ -21,6 +21,9 @@ const (
 	healthWeightStaleSubscriptionCap = 20
 	healthWeightUncertainDeployment  = 10
 	healthWeightMostlyUnprobed       = 5
+	// healthWeightRuleConflicts is small because a dead rule still yields a valid config; it
+	// costs confidence in whether the configuration does what the operator intended.
+	healthWeightRuleConflicts = 5
 	// majorityUnprobedRatio is the unprobed share above which the operator cannot judge
 	// node health at all. It costs little because it is a visibility gap, not a defect.
 	majorityUnprobedRatio = 0.5
@@ -58,6 +61,9 @@ type HealthInput struct {
 	Nodes                []Node
 	Groups               []GroupHealth
 	Rules                []RuleHealth
+	// RuleAnalysis carries the shadowing/overlap findings so the score reflects rules that
+	// can never take effect. It is computed by the caller from the same rule set.
+	RuleAnalysis         RuleAnalysis
 	UncertainDeployments int
 }
 
@@ -252,6 +258,27 @@ func ComputeHealth(input HealthInput) Health {
 				Deduction: healthWeightMostlyUnprobed, Count: unprobed,
 			})
 		}
+	}
+
+	// 8. Rules that can never match because an earlier rule already covers them. This does not
+	// block a publish, so it warns: the configuration is valid but may not do what was intended.
+	if findings := input.RuleAnalysis.Conflicts; len(findings) > 0 {
+		names := make([]string, 0, len(findings))
+		for _, finding := range findings {
+			names = append(names, finding.Name)
+		}
+		checks = append(checks, HealthCheck{
+			ID: "rule_conflicts", Severity: "warn",
+			Title:     "有规则因前序规则而不会命中",
+			Detail:    fmt.Sprintf("%d 条规则受影响：%s。发布不会失败，但这些规则不会生效。", len(findings), joinLimited(names, 3)),
+			Deduction: healthWeightRuleConflicts, Count: len(findings),
+		})
+	} else if input.RuleAnalysis.Checked > 0 {
+		checks = append(checks, HealthCheck{
+			ID: "rule_conflicts", Severity: "ok",
+			Title:  "规则顺序无覆盖问题",
+			Detail: "未发现被前序规则完全覆盖的规则。",
+		})
 	}
 
 	score := 100

@@ -44,8 +44,9 @@ listener reachable from the network is refused at startup. See
 - `PUT|DELETE /api/v1/proxy-groups/{id}`
 - `GET|POST /api/v1/rules`
 - `PUT|DELETE /api/v1/rules/{id}`
+- `GET /api/v1/rules/conflicts` analyses rule order and reports enabled rules that can never match because an earlier rule already covers their traffic, plus `SRC-IP-CIDR` rules whose source ranges overlap with different targets. Read-only: nothing is reordered or rewritten. Findings are `warn`, not `block`, because such a configuration still publishes successfully.
 
-IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID闁炽儲鏀簅t a display name. Terminal `proxyGroupId` is a proxy-group ID.
+IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID—not a display name. Terminal `proxyGroupId` is a proxy-group ID.
 
 ## Configuration lifecycle
 
@@ -125,10 +126,11 @@ Create a rule using the proxy-group ID returned by the previous request:
 
 For dynamic group membership, `memberFilter` supports `subscription`, `region`, `keyword`, and `regex`. `subscription` matches the subscription name prefix, while `region` and `keyword` are case-insensitive substrings of the rendered node name. `maxLatencyMs` is rejected until reliable runtime latency samples are available.
 
-### 闁煎搫鍊婚崑锝呫€掗崨顓炵
+### 节点清单
 
-`GET /api/v1/nodes` 濞?`subscription_snapshots` 濞戞搩鍘介惁鈩冪▔椤忓浂鍚傞梻鍐ㄦ噹閺侇喗绋夐埀顒勫冀閸ヮ亶鍞跺☉?current 闁汇劌瀚崹姘跺礉閻旈攱褰ラ柣鎾楀棭鍤㈤柛?`proxies`闁挎稑鐭佺换鎴﹀炊閻愯泛螡闁绘劕婀辫彊閻庤纰嶅ǎ鎶芥偨?ID闁靛棔绀佺敮顐ｆ叏鐎ｎ厼螡闁绘劗鎳撻幃鏇㈠Υ娴ｇ顩柡灞炬尭閹洟濡存担绛嬪悅闂傚啫鎳忓闈涒攦閹扳斁鍋撴担钘壩濋柣鎰贡鐞氼偊宕圭€ｎ亝瀚查柛鈺勬〃缁剟宕ュ鍥嗙偤鎯冮崟顐ｅ嬀闁告牜鍎ょ敮褰掑棘椤撴壕鍋撻崒婵單濋柣?ID 闁汇垼绮鹃褰掓⒓?ID 濞戞挸楠哥敮顐ｆ叏鐎ｎ厼螡闁绘劗鎳撻幃鏇㈡偨閻旂鐏囬柨娑欑☉閹捇宕ュ鍫澪濋柣鎰潐濞肩敻鎳涢鍐憹闁告艾鐭侀褰掓⒓閸涱喗顦уù鐘茬С缁绘岸骞愭担椋庣憹闁?ID闁靛棗鍊稿﹢鎾礌閸濆嫮鎽熸繛鍫ユ涧瑜把囧及椤栨瑧顏辩紒澶婄Т閹洜绮旈弶鎸庡剻闁告瑦鍨电槐锟犲箳閵婏附鐒介柨娑樼暛regionInferred` 闁活潿鍔嬬花顒勫及鎼达絺鈧﹢寮介崶顏嗘闁稿繐鐖煎顏堝级閸愩劉鏋嗛柟顑讲鍋撻崒婵單濋柣鎰潐鐢澘霉鐎ｎ剛娉㈤柡瀣矒閳ь剚淇虹换?`node_probe_results` 闁归晲妞掔粻娆撳礌閺嶇數骞㈤柟鎭掑灪缁佸绱掗幘瀵镐函闁告瑯浜欓崬顒傛偘閵婏箑璧存繛鏉戭儐濡炲倹娼婚幇顖ｆ斀濞戞搩鍘惧▓?Mihomo 闂佹澘绉堕悿鍡涙晬鐏炶偐鐟濋柤鍐测偓鐔烘闁哄嫬楠搁惃濠氬嫉椤忓嫬绲洪悽顖氬暟濞堟垹鎷嬮姀銈嗩潐闁煎搫鍊婚崑锝夊矗椤栨粍鏆忛柕?
-婵縿鍊栫敮鎾矗閿濆嫮鐟濆ù鍏肩煯鐎靛矂宕濋妸銉ョ厱闁哄倹濯介褰掓⒓閸涱偀鍋撴穱姗甇ST /api/v1/nodes/probe` 濞村吋宀搁埀顒佷亢缁?Mihomo controller 閻庣數鎳撶紞瀣礈瀹ュ牏绠ラ悶娑樼焸閸樸倗绱旈鏄忓幀闁汇劌瀚俊顓㈡倷閻熸澘绲洪悹褔顥撳﹢锛勨偓鍦仜濞嗐垺娼婚悢绋胯荡婵炴潙顑戠槐閬嶅嫉椤忓嫬顫ｉ弶鐐垫櫕濞堟垿鎳為崒婊冧化闁哄秴娲╅鍥ㄧ▔?`not_loaded`闁挎稑鏈敮鍫曞礆鐠虹儤鐝ら柡鍫邯閸樸倗绱旈鑺ヮ槯閺夆晜鏌ㄥú?503闁靛棗鍊归惀鍛村嫉婢跺鐦☉鏂挎噹鐎佃尪绠涢銈呭季闁汇劌瀚褰掓⒓閸涱剛鐟濆ù鍏肩煯妤犲洭鎮介悢璇参濋柣鎰攰椤斿洩銇愰弴顏嗗耿閻忓繑纰嶅﹢顓㈠箳閵忥紕銈撮柣?`latencyMs` 濞?`null`闁靛棔姊梥tatus=unmeasured`闁挎稑濂旂粭澶愭嚄閼恒儱惟闁煎搫鍊婚崑锝囨喆閸℃洝绀嬮柛娆樺灣閺併倝骞嬮弽锔剧憹闁告瑯鍨抽弫銈夊Υ?
+`GET /api/v1/nodes` 从 `subscription_snapshots` 中每个订阅唯一标记为 current 的成功快照读取 `proxies`，返回节点稳定派生 ID、原始节点名、渲染名、订阅来源、节点类型和基于名称的地区推断。节点 ID 由订阅 ID 与原始节点名生成；同名节点来自不同订阅时仍保持不同 ID。地区字段只是一种名称启发式推断，`regionInferred` 用于明确标识其非权威性。节点探测结果通过 `node_probe_results` 持久化；探测结果只代表探测时运行中的 Mihomo 配置，不能证明尚未发布的订阅节点可用。
+
+此接口不会主动刷新订阅。`POST /api/v1/nodes/probe` 会通过 Mihomo controller 对当前运行配置中的节点发起真实延迟探测；未加载的节点标记为 `not_loaded`，控制器未配置时返回 503。没有持久化快照的订阅不会产生节点记录；尚未探测的 `latencyMs` 为 `null`、`status=unmeasured`，不能把节点视为可用或不可用。
 
 ### Proxy group node references
 `memberNodeIds` is the stable member reference used by new clients. `memberNodeNames` remains for compatibility with existing records and older clients. When both are present, candidate building uses `memberNodeIds` for manual membership. If a referenced node is missing from the candidate built from enabled subscriptions, validation fails and asks the operator to review membership.

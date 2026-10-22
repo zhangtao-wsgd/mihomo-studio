@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"mihomo-studio/internal/config"
 	"mihomo-studio/internal/domain"
 	"mihomo-studio/internal/store"
 	"mihomo-studio/internal/workflow"
@@ -65,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/proxy-groups/{id}", s.deleteProxyGroup)
 	mux.HandleFunc("GET /api/v1/proxy-groups/runtime-check", s.verifyRuntimeProxyGroups)
 	mux.HandleFunc("GET /api/v1/rules", s.listRules)
+	mux.HandleFunc("GET /api/v1/rules/conflicts", s.ruleConflicts)
 	mux.HandleFunc("POST /api/v1/rules", s.saveRule)
 	mux.HandleFunc("PUT /api/v1/rules/{id}", s.updateRule)
 	mux.HandleFunc("DELETE /api/v1/rules/{id}", s.deleteRule)
@@ -372,6 +374,18 @@ func (s *Server) deleteProxyGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listRules(w http.ResponseWriter, r *http.Request) {
 	x, e := s.Store.ListRules(r.Context())
 	respond(w, x, e)
+}
+
+// ruleConflicts reports rules that an earlier rule makes unreachable, plus overlapping
+// source routes. It is read-only: the operator decides whether to reorder, retarget, or
+// delete. Nothing is rewritten automatically.
+func (s *Server) ruleConflicts(w http.ResponseWriter, r *http.Request) {
+	rules, err := s.Store.ListRules(r.Context())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, config.AnalyzeRules(rules))
 }
 func (s *Server) saveRule(w http.ResponseWriter, r *http.Request) {
 	var x domain.Rule
