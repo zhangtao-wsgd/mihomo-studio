@@ -17,14 +17,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type snapshotNode struct {
-	Name string `yaml:"name"`
-	Type string `yaml:"type"`
-}
-type snapshotDocument struct {
-	Proxies []snapshotNode `yaml:"proxies"`
-}
-
 // SubscriptionSnapshotHistory returns immutable snapshots newest-first and a node-level
 // diff against the immediately preceding successful snapshot. Possible renames are only
 // heuristics and are labelled explicitly; they never rewrite node identities automatically.
@@ -63,15 +55,9 @@ func (b *Builder) SubscriptionSnapshotHistory(ctx context.Context, subscriptionI
 		if err != nil {
 			return nil, fmt.Errorf("read snapshot %s: %w", x.Hash, err)
 		}
-		var doc snapshotDocument
-		if err := yaml.Unmarshal(body, &doc); err != nil {
+		current, err := snapshotNodeTypes(body)
+		if err != nil {
 			return nil, fmt.Errorf("parse snapshot %s: %w", x.Hash, err)
-		}
-		current := map[string]string{}
-		for _, p := range doc.Proxies {
-			if strings.TrimSpace(p.Name) != "" {
-				current[p.Name] = p.Type
-			}
 		}
 		item := map[string]any{"sha256": x.Hash, "fetchedAt": x.FetchedAt, "current": x.Current == 1, "proxyCount": x.Count}
 		// Diff each snapshot against the next older snapshot (history is newest first).
@@ -80,15 +66,9 @@ func (b *Builder) SubscriptionSnapshotHistory(ctx context.Context, subscriptionI
 			if readErr != nil {
 				return nil, readErr
 			}
-			var olderDoc snapshotDocument
-			if err := yaml.Unmarshal(olderBody, &olderDoc); err != nil {
-				return nil, err
-			}
-			older := map[string]string{}
-			for _, p := range olderDoc.Proxies {
-				if strings.TrimSpace(p.Name) != "" {
-					older[p.Name] = p.Type
-				}
+			older, parseErr := snapshotNodeTypes(olderBody)
+			if parseErr != nil {
+				return nil, parseErr
 			}
 			added, removed, unchanged := diffNames(current, older)
 			item["diff"] = map[string]any{"added": added, "removed": removed, "unchanged": unchanged, "possibleRenames": possibleRenames(added, removed, current, older)}
@@ -99,6 +79,25 @@ func (b *Builder) SubscriptionSnapshotHistory(ctx context.Context, subscriptionI
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+// snapshotNodeTypes indexes a stored raw snapshot by node name. Snapshots keep whatever
+// the provider sent, which may be Mihomo YAML or a Base64/plain URI list, so both are
+// accepted here rather than assuming YAML.
+func snapshotNodeTypes(body []byte) (map[string]string, error) {
+	proxies, err := parseSubscriptionProxies(body)
+	if err != nil {
+		return nil, err
+	}
+	types := make(map[string]string, len(proxies))
+	for _, entry := range proxies {
+		name, _ := entry["name"].(string)
+		proxyType, _ := entry["type"].(string)
+		if strings.TrimSpace(name) != "" {
+			types[name] = proxyType
+		}
+	}
+	return types, nil
 }
 
 func diffNames(current, older map[string]string) (added, removed []string, unchanged int) {

@@ -103,23 +103,12 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		if err != nil {
 			return Candidate{}, fmt.Errorf("fetch subscription %q: %w", sub.Name, err)
 		}
-		var doc map[string]any
-		if err := yaml.Unmarshal(body, &doc); err != nil {
-			return Candidate{}, fmt.Errorf("subscription %q is not a Mihomo-compatible YAML document: %w", sub.Name, err)
+		parsedProxies, err := parseSubscriptionProxies(body)
+		if err != nil {
+			return Candidate{}, fmt.Errorf("subscription %q: %w", sub.Name, err)
 		}
-		items, ok := doc["proxies"].([]any)
-		if !ok {
-			return Candidate{}, fmt.Errorf("subscription %q has no proxies list; only Mihomo-compatible YAML subscriptions are supported in this first slice", sub.Name)
-		}
-		for _, raw := range items {
-			p, ok := raw.(map[string]any)
-			if !ok {
-				return Candidate{}, fmt.Errorf("subscription %q contains an invalid proxy entry", sub.Name)
-			}
-			name, ok := p["name"].(string)
-			if !ok || strings.TrimSpace(name) == "" {
-				return Candidate{}, fmt.Errorf("subscription %q contains a proxy without a name", sub.Name)
-			}
+		for _, p := range parsedProxies {
+			name, _ := p["name"].(string)
 			p["name"] = sub.Name + " / " + name
 			proxies = append(proxies, p)
 		}
@@ -129,7 +118,7 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		if err := writeImmutable(inputPath, body); err != nil {
 			return Candidate{}, fmt.Errorf("persist subscription input snapshot %q: %w", sub.Name, err)
 		}
-		if err := b.recordCurrentSnapshot(ctx, sub.ID, sourceHash, inputPath, fetchedAt, len(items)); err != nil {
+		if err := b.recordCurrentSnapshot(ctx, sub.ID, sourceHash, inputPath, fetchedAt, len(parsedProxies)); err != nil {
 			return Candidate{}, fmt.Errorf("record current snapshot for subscription %q: %w", sub.Name, err)
 		}
 		sourceSnapshots = append(sourceSnapshots, sourceSnapshot{SubscriptionID: sub.ID, SHA256: sourceHash, Path: inputPath})
@@ -426,7 +415,16 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		output, validationErr := exec.CommandContext(ctx, b.MihomoBinary, "-t", "-f", path).CombinedOutput()
 		if validationErr != nil {
 			c.Status = "validation_failed"
-			c.ValidationMessage = "Mihomo rejected the candidate: " + strings.TrimSpace(string(output))
+			// The binary can fail before printing anything: a missing executable, a
+			// permission problem, or an exec error surfaces only through validationErr.
+			// Reporting an empty reason would tell the operator nothing actionable.
+			reason := strings.TrimSpace(string(output))
+			if reason == "" {
+				reason = "no diagnostic output was produced by " + b.MihomoBinary + ": " + validationErr.Error()
+			} else {
+				reason += " (" + validationErr.Error() + ")"
+			}
+			c.ValidationMessage = "Mihomo rejected the candidate: " + reason
 		} else {
 			c.Status = "validated"
 			c.ValidationMessage = "Mihomo binary validation succeeded; proxy references and rule targets were also checked."
@@ -532,23 +530,10 @@ func (b *Builder) RefreshSubscription(ctx context.Context, subscriptionID string
 		_, _ = b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status='fetch_failed',updated_at=? WHERE id=?`, fetchedAt, fetchedAt, subscriptionID)
 		return nil, fmt.Errorf("fetch subscription %q: %w", name, err)
 	}
-	var doc struct {
-		Proxies []struct {
-			Name string `yaml:"name"`
-		} `yaml:"proxies"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		_, _ = b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status='invalid_yaml',updated_at=? WHERE id=?`, fetchedAt, fetchedAt, subscriptionID)
-		return nil, fmt.Errorf("subscription %q is not valid Mihomo YAML: %w", name, err)
-	}
-	if doc.Proxies == nil {
-		_, _ = b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status='invalid_yaml',updated_at=? WHERE id=?`, fetchedAt, fetchedAt, subscriptionID)
-		return nil, fmt.Errorf("subscription %q has no proxies list", name)
-	}
-	for _, p := range doc.Proxies {
-		if strings.TrimSpace(p.Name) == "" {
-			return nil, fmt.Errorf("subscription %q contains a proxy without a name", name)
-		}
+	proxies, err := parseSubscriptionProxies(body)
+	if err != nil {
+		_, _ = b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status='invalid_format',updated_at=? WHERE id=?`, fetchedAt, fetchedAt, subscriptionID)
+		return nil, fmt.Errorf("subscription %q: %w", name, err)
 	}
 	digest := sha256.Sum256(body)
 	hash := hex.EncodeToString(digest[:])
@@ -556,13 +541,13 @@ func (b *Builder) RefreshSubscription(ctx context.Context, subscriptionID string
 	if err := writeImmutable(path, body); err != nil {
 		return nil, fmt.Errorf("persist subscription snapshot: %w", err)
 	}
-	if err := b.recordCurrentSnapshot(ctx, subscriptionID, hash, path, fetchedAt, len(doc.Proxies)); err != nil {
+	if err := b.recordCurrentSnapshot(ctx, subscriptionID, hash, path, fetchedAt, len(proxies)); err != nil {
 		return nil, err
 	}
 	if _, err := b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status='fetched',updated_at=? WHERE id=?`, fetchedAt, fetchedAt, subscriptionID); err != nil {
 		return nil, err
 	}
-	return map[string]any{"subscriptionId": subscriptionID, "subscription": name, "sha256": hash, "fetchedAt": fetchedAt, "proxyCount": len(doc.Proxies), "snapshotPath": path, "status": "current"}, nil
+	return map[string]any{"subscriptionId": subscriptionID, "subscription": name, "sha256": hash, "fetchedAt": fetchedAt, "proxyCount": len(proxies), "snapshotPath": path, "status": "current"}, nil
 }
 
 func (b *Builder) recordCurrentSnapshot(ctx context.Context, subscriptionID, hash, path, fetchedAt string, proxyCount int) error {
@@ -633,9 +618,18 @@ func fetchSubscription(ctx context.Context, rawURL string) ([]byte, error) {
 	return body, nil
 }
 
+// nonPublicNetworks are rejected as subscription hosts so that a stored URL cannot be
+// used to make the control plane reach loopback, RFC 1918, link-local, or documentation
+// addresses on the operator's network.
+//
+// 198.18.0.0/15 (RFC 2544 benchmarking) is deliberately NOT listed. Subscription
+// providers in the wild publish that range as the A record for their delivery hosts,
+// and Mihomo TUN/DNS-fake-IP setups also allocate from it. Treating it as private
+// rejected legitimate subscriptions. This narrows the SSRF guard: a stored subscription
+// URL can now reach a host in that range. Every other reserved range still applies.
 var nonPublicNetworks = parseNetworks([]string{
 	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
-	"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+	"192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
 	"::/128", "::1/128", "::ffff:0:0/96", "64:ff9b:1::/48", "100::/64", "2001:10::/28", "2001:db8::/32", "2002::/16", "fc00::/7", "fe80::/10", "ff00::/8",
 })
 

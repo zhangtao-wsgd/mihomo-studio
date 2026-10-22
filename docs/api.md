@@ -41,11 +41,27 @@ An HTTP request timeout during runtime reload is recorded as `unknown`, not trea
 
 ## Minimal setup examples
 
-Create a subscription (use a URL that serves Mihomo-compatible YAML containing a `proxies` list):
+Create a subscription. The URL may serve any of three payload shapes, detected automatically:
+
+| Payload | Example provider form |
+|---|---|
+| Mihomo YAML with a `proxies` list | `proxies:\n  - name: HK-01\n    type: ss\n    ...` |
+| Base64 of a newline-separated URI list | `dm1lc3M6Ly9leUoySWpvaU1pSXNJ...` |
+| Plain newline-separated URI list | `vmess://eyJ2IjoiMiIsInBzIjoi...` |
+
+Recognized URI schemes are `vmess`, `vless`, `ss`, and `trojan`. An unparseable payload is
+rejected with an error naming the reason and sets `lastStatus` to `invalid_format`; an empty
+`proxies` list is an error, not a silent success. Individual unparseable entries within an
+otherwise valid list are counted and reported rather than dropped silently.
 
 ```json
-{"name":"Primary","url":"https://example.invalid/mihomo.yaml","enabled":true}
+{"name":"Primary","url":"https://example.invalid/subscription","enabled":true}
 ```
+
+The subscription host must resolve to a non-private address. `198.18.0.0/15` is treated as
+acceptable because real providers publish it, but every other private, loopback,
+link-local, and documentation range is rejected. See
+[security.md](security.md#ssrf-guard).
 
 Create a fallback group; the returned `id` is the stable reference for terminal and rule targets:
 

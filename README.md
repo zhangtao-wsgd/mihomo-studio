@@ -1,4 +1,4 @@
-# Mihomo Studio
+﻿# Mihomo Studio
 
 Mihomo Studio is a self-hosted control plane for one official MetaCubeX Mihomo instance. This repository is the first implementation slice, not a claim that every prototype interaction is already connected.
 
@@ -84,18 +84,17 @@ Default listen address is `:8080`; database and snapshot locations can be set wi
 - `GET|PUT|DELETE /api/v1/proxy-groups/{id}`
 - `GET|POST /api/v1/rules`
 - `GET|PUT|DELETE /api/v1/rules/{id}`
-- `POST /api/v1/config-candidates` — build and validate an immutable candidate from the current desired configuration
+- `POST /api/v1/config-candidates` 鈥?build and validate an immutable candidate from the current desired configuration
 - `GET /api/v1/config-candidates/{id}`
 - `GET /api/v1/config-candidates/{id}/inputs`
-- `POST /api/v1/config-candidates/{id}/publish` — requires `{"confirm":true}`
+- `POST /api/v1/config-candidates/{id}/publish` 鈥?requires `{"confirm":true}`
 - `POST /api/v1/deployments/{id}/verify`
-- `POST /api/v1/deployments/{id}/rollback` — requires `{"confirm":true}`
+- `POST /api/v1/deployments/{id}/rollback` 鈥?requires `{"confirm":true}`
 
-The root page serves the V6 interface with a partial API integration. Persisted CRUD, node inventory from saved subscription snapshots, and candidate/publish flows call the Go API; deployment history and settings are still not fully wired. Node latency probes now use the live Mihomo controller API and are only meaningful for nodes already loaded by the running configuration; subscription snapshot history includes node-level diffs, and runtime proxy-group checks inspect the controller-reported group types/current selections without injecting outages. Proxy-group membership now stores stable node IDs while retaining member-name fields for backward compatibility. The unmodified official MetaCubeX dashboard is available as an optional diagnostics profile at `http://127.0.0.1:8081` after `docker compose --profile diagnostics up -d`. The first iteration validates candidates with the Mihomo binary copied from the same pinned official image, promotes snapshots atomically, reloads through the controller API, and records runtime uncertainty rather than claiming success. Terminal routing is generated for source-IP/CIDR identities; MAC/manual identities remain inventory-only because Mihomo rules cannot enforce them. Subscription input currently supports Mihomo-compatible YAML with a `proxies` list; provider-specific Base64/URI subscription formats are not implemented yet. 
+The root page serves the V6 interface with a partial API integration. Persisted CRUD, node inventory from saved subscription snapshots, and candidate/publish flows call the Go API; deployment history and settings are still not fully wired. Node latency probes now use the live Mihomo controller API and are only meaningful for nodes already loaded by the running configuration; subscription snapshot history includes node-level diffs, and runtime proxy-group checks inspect the controller-reported group types/current selections without injecting outages. Proxy-group membership now stores stable node IDs while retaining member-name fields for backward compatibility. The unmodified official MetaCubeX dashboard is available as an optional diagnostics profile at `http://127.0.0.1:8081` after `docker compose --profile diagnostics up -d`. The first iteration validates candidates with the Mihomo binary copied from the same pinned official image, promotes snapshots atomically, reloads through the controller API, and records runtime uncertainty rather than claiming success. Terminal routing is generated for source-IP/CIDR identities; MAC/manual identities remain inventory-only because Mihomo rules cannot enforce them. Subscription input accepts Mihomo-compatible YAML with a `proxies` list, a Base64-encoded proxy URI list, and a plain proxy URI list; `vmess`, `vless`, `ss`, and `trojan` schemes are parsed. See [docs/implementation-status.md](docs/implementation-status.md#subscription-format-support-increment) for the exact coverage, including which schemes have only unit-test coverage rather than live verification. 
 
 
-节点矩阵通过 `GET /api/v1/nodes` 读取已持久化的订阅输入快照。订阅可单独刷新；节点延迟探测通过 Mihomo 控制器执行，只对已加载到运行配置中的节点返回真实样本。快照历史展示新增/删除节点与低置信度改名候选。
-
+鑺傜偣鐭╅樀閫氳繃 `GET /api/v1/nodes` 璇诲彇宸叉寔涔呭寲鐨勮闃呰緭鍏ュ揩鐓с€傝闃呭彲鍗曠嫭鍒锋柊锛涜妭鐐瑰欢杩熸帰娴嬮€氳繃 Mihomo 鎺у埗鍣ㄦ墽琛岋紝鍙宸插姞杞藉埌杩愯閰嶇疆涓殑鑺傜偣杩斿洖鐪熷疄鏍锋湰銆傚揩鐓у巻鍙插睍绀烘柊澧?鍒犻櫎鑺傜偣涓庝綆缃俊搴︽敼鍚嶅€欓€夈€?
 
 ### Subscription refresh and snapshot behavior
 

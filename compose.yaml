@@ -31,7 +31,10 @@ services:
       MIHOMO_CONTROLLER_URL: http://mihomo:9090
       MIHOMO_SECRET: ${MIHOMO_SECRET:?Set MIHOMO_SECRET in .env}
     ports:
-      - "127.0.0.1:8080:8080"
+      # Loopback by default. Set STUDIO_BIND_IP to bind the control UI to a LAN address.
+      # The control API has no authentication yet, so a LAN binding lets anyone on that
+      # network change configuration and publish it. See docs/security.md.
+      - "${STUDIO_BIND_IP:-127.0.0.1}:8080:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
       interval: 15s
@@ -67,7 +70,10 @@ services:
       SAFE_PATHS: /runtime/active:/data/snapshots
     ports:
       - "${MIHOMO_BIND_IP:-127.0.0.1}:7890:7890"
-      - "127.0.0.1:9090:9090"
+      # Loopback by default. Set CONTROLLER_BIND_IP to expose the controller on a LAN
+      # address, for example so metacubexd on another host can reach it. The controller
+      # can rewrite live routing and is protected only by MIHOMO_SECRET. See docs/security.md.
+      - "${CONTROLLER_BIND_IP:-127.0.0.1}:9090:9090"
     healthcheck:
       test: ["CMD", "/mihomo", "-v"]
       interval: 30s

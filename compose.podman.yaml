@@ -21,9 +21,9 @@
 #   keeps the named volumes host-inspectable. Mihomo itself still reads the shared
 #   runtime volume as root, so cross-container access is unaffected.
 # * ports — rootless Podman cannot bind privileged ports, but 80/443 are not used;
-#   the defaults are preserved. The proxy listener is published on the VM's LAN
-#   address so terminal devices can reach it, which is a deliberate configuration
-#   decision recorded in the deployment notes rather than an accidental exposure.
+#   the defaults are preserved. Bind addresses are read from STUDIO_BIND_IP,
+#   CONTROLLER_BIND_IP, and MIHOMO_BIND_IP in the base file, so an operator who wants
+#   LAN access sets them in .env rather than editing either compose file.
 
 services:
   mihomo-bootstrap:

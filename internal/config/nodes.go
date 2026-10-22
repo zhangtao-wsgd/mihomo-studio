@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 func stableNodeID(subscriptionID, sourceName string) string {
@@ -74,21 +72,20 @@ func (b *Builder) Nodes(ctx context.Context) ([]Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read current snapshot for subscription %q: %w", subName, err)
 		}
-		var doc struct {
-			Proxies []struct {
-				Name string `yaml:"name"`
-				Type string `yaml:"type"`
-			} `yaml:"proxies"`
-		}
-		if err := yaml.Unmarshal(body, &doc); err != nil {
+		// Inventory reads the same raw snapshot the candidate builder would read, so a
+		// Base64 URI list and a Mihomo YAML document behave identically here.
+		proxies, err := parseSubscriptionProxies(body)
+		if err != nil {
 			return nil, fmt.Errorf("parse current snapshot for subscription %q: %w", subName, err)
 		}
-		for _, p := range doc.Proxies {
-			if strings.TrimSpace(p.Name) == "" {
+		for _, p := range proxies {
+			name, _ := p["name"].(string)
+			proxyType, _ := p["type"].(string)
+			if strings.TrimSpace(name) == "" {
 				continue
 			}
-			region := inferRegion(p.Name)
-			node := Node{ID: stableNodeID(subID, p.Name), Name: subName + " / " + p.Name, SourceName: p.Name, SubscriptionID: subID, Subscription: subName, Type: p.Type, Region: region, RegionInferred: region != "", LatencyMS: nil, Status: "unmeasured"}
+			region := inferRegion(name)
+			node := Node{ID: stableNodeID(subID, name), Name: subName + " / " + name, SourceName: name, SubscriptionID: subID, Subscription: subName, Type: proxyType, Region: region, RegionInferred: region != "", LatencyMS: nil, Status: "unmeasured"}
 			var checked, message string
 			var latency sql.NullInt64
 			probeErr := b.DB.QueryRowContext(ctx, `SELECT latency_ms,status,checked_at,error_message FROM node_probe_results WHERE node_id=?`, node.ID).Scan(&latency, &node.Status, &checked, &message)

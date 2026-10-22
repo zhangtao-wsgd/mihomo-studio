@@ -167,3 +167,94 @@ Three defects were invisible to unit tests and to code review, and were found by
 - `scripts/vm-lifecycle.sh` — drives the full desired-state-to-verified-deployment lifecycle through the public API.
 
 These target a disposable test host. They assume passwordless SSH is configured out of band and contain no credentials, secrets, or host-specific absolute paths.
+
+## Subscription format support increment
+
+The first slice only accepted Mihomo YAML with a top-level `proxies` list. Real providers
+routinely serve something else, so a real subscription could not be imported at all. This
+increment adds the shapes that are actually encountered.
+
+### What is supported now
+
+`parseSubscriptionProxies` in `internal/config/subscription_format.go` normalizes three
+payload shapes into Mihomo proxy maps:
+
+| Shape | Detection | Notes |
+|---|---|---|
+| Mihomo YAML | parsed before base64, because YAML bodies are often entirely base64-safe characters | Still requires a `proxies` list; `proxies: []` is an error, not an empty success |
+| Base64 of a newline-separated URI list | standard, URL-safe, padded or unpadded | Newlines and spaces stripped before decoding |
+| Plain newline-separated URI list | fallback after base64 fails | CRLF tolerated |
+
+Recognized schemes: `vmess` (base64 JSON), `vless`, `ss` (both `ss://base64@host:port` and
+`ss://base64(method:password@host:port)`), and `trojan`. Transport fields map onto Mihomo's
+`ws-opts`, `grpc-opts`, and `http-opts`, and `tls`/`reality` set `tls`, `servername`, and
+`reality-opts`.
+
+The same parser is used by candidate composition, single-subscription refresh, node
+inventory, and snapshot history, so all four agree on what a snapshot contains. Previously
+those four read YAML independently.
+
+### Failure behaviour
+
+- A payload that yields no usable node is an error naming the reason. It is never an
+  empty success.
+- Entries that fail inside an otherwise valid list are counted, and the error text states
+  how many URIs were present and why each failed.
+- A missing subscription name falls back to `host:port` so the node stays addressable
+  instead of being dropped.
+- `last_status` now records `invalid_format` for an unparseable payload, distinct from
+  `fetch_failed`.
+
+### SSRF guard narrowed (deliberate)
+
+`198.18.0.0/15` (RFC 2544 benchmarking) was removed from `nonPublicNetworks`. Real
+subscription providers publish that range as the A record for delivery hosts, and Mihomo
+TUN/fake-IP setups also allocate from it, so legitimate subscriptions were rejected with
+`subscription host resolves only to private or reserved addresses`.
+
+This is a deliberate narrowing of the guard, not an oversight: a stored subscription URL
+can now reach a host in `198.18.0.0/15`. Every other private, loopback, link-local, and
+documentation range is still rejected, and `TestIsPublicAddress` pins both the allowed and
+the still-blocked neighbours.
+
+### Validation diagnostics fixed
+
+When the Mihomo binary failed without printing anything — a missing executable, a
+permission problem, an `exec` error — the candidate message read
+`Mihomo rejected the candidate: ` with nothing after it. The `exec` error is now always
+included, so an unconfigured or missing binary is distinguishable from a genuine
+config rejection.
+
+### Verified against a real subscription
+
+Executed locally with Go 1.23.12, the real Mihomo v1.19.32 Windows binary, and the
+operator's live provider subscription (45 nodes, all `vmess`, Base64-encoded):
+
+- Refresh parsed **45/45** nodes and promoted an immutable snapshot.
+- Node inventory listed 45 nodes with stable IDs and inferred regions.
+- Candidate build ran the real `mihomo -t -f` and returned **`status=validated`**.
+- Publish with confirmation returned **`published_unverified`** with the message
+  "no Mihomo runtime controller is configured; live state is not claimed" — correct,
+  because no controller was reachable in that run.
+- `go test ./...` — 23 tests pass, including 8 new subscription-format tests and 2 new
+  SSRF boundary cases.
+
+Two defects were found by these tests and fixed before completion: `url.Parse` was being
+called on a scheme-stripped string, which broke every `vless` and `trojan` URI, and CRLF
+line endings leaked a `\r` into the trailing URI of a list.
+
+### Not verified in this increment
+
+- `vless`, `ss`, and `trojan` parsing is covered by unit tests built from the documented
+  URI schemas, but no live provider subscription in those schemes was available, so they
+  were not exercised end-to-end. `vmess` was.
+- REJECT-with-drop, h2 transport, and HTTP-header-only transports were not exercised
+  against a live runtime.
+
+## Still open
+
+- The Studio control API has no authentication and no CSRF tokens. See
+  [security.md](security.md).
+- No `GET /api/v1/deployments` collection endpoint; the release history panel remains
+  prototype-only and cannot list or roll back to past deployments.
+- `audit_events` is written but never read.

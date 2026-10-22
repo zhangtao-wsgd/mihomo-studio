@@ -18,6 +18,12 @@ func TestIsPublicAddress(t *testing.T) {
 		{"192.0.2.1", false},
 		{"::1", false},
 		{"2606:4700:4700::1111", true},
+		// RFC 2544 benchmarking space is intentionally allowed: real subscription hosts
+		// publish it, and so do Mihomo TUN fake-IP pools. See nonPublicNetworks.
+		{"198.18.0.82", true},
+		{"198.19.255.1", true},
+		// The neighbouring documentation range stays blocked.
+		{"198.51.100.1", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.address, func(t *testing.T) {
