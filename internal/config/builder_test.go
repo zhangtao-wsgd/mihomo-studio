@@ -238,3 +238,47 @@ func TestBuildRejectsTamperedLastKnownGoodSnapshot(t *testing.T) {
 	}
 }
 
+func TestBuildBlocksFailedRefreshWithoutPreviousSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "studio.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.DB.Close()
+
+	sub := domain.Subscription{
+		ID: "fresh", Name: "Fresh", URL: "https://subscription.example/sub.yaml",
+		Enabled: true,
+	}
+	if err := st.SaveSubscription(ctx, sub); err != nil {
+		t.Fatalf("save subscription: %v", err)
+	}
+
+	builder := &Builder{DB: st.DB, SnapshotDir: t.TempDir(), ControllerSecret: "test-secret"}
+	builder.fetch = func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("provider unavailable")
+	}
+	_, buildErr := builder.Build(ctx)
+	if buildErr == nil ||
+		!strings.Contains(buildErr.Error(), "no last-known-good snapshot exists") ||
+		!strings.Contains(buildErr.Error(), "candidate generation is blocked") {
+		t.Fatalf("Build error = %v, want explicit block when no trusted snapshot exists", buildErr)
+	}
+
+	var candidates int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM config_candidates`).Scan(&candidates); err != nil {
+		t.Fatalf("count candidates: %v", err)
+	}
+	if candidates != 0 {
+		t.Fatalf("failed initial refresh must not produce a candidate, got %d", candidates)
+	}
+
+	var status string
+	if err := st.DB.QueryRowContext(ctx, `SELECT last_status FROM subscriptions WHERE id=?`, sub.ID).Scan(&status); err != nil {
+		t.Fatalf("read subscription status: %v", err)
+	}
+	if status != "fetch_failed" {
+		t.Fatalf("subscription status = %q, want fetch_failed", status)
+	}
+}
+
