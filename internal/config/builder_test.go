@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net"
 	"os"
@@ -128,10 +130,12 @@ func TestBuildFailurePreservesCurrentSubscriptionSnapshot(t *testing.T) {
 			}
 
 			snapshotPath := filepath.Join(t.TempDir(), "previous.yaml")
-			if err := os.WriteFile(snapshotPath, []byte("proxies:\n  - name: old-node\n"), 0o600); err != nil {
+			previousBody := []byte("proxies:\n  - name: old-node\n")
+			if err := os.WriteFile(snapshotPath, previousBody, 0o600); err != nil {
 				t.Fatalf("write previous snapshot: %v", err)
 			}
-			oldHash := strings.Repeat("a", 64)
+			previousDigest := sha256.Sum256(previousBody)
+			oldHash := hex.EncodeToString(previousDigest[:])
 			builder := &Builder{DB: st.DB, SnapshotDir: t.TempDir(), ControllerSecret: "test-secret"}
 			if err := builder.recordCurrentSnapshot(ctx, sub.ID, oldHash, snapshotPath, time.Now().UTC().Format(time.RFC3339Nano), 1); err != nil {
 				t.Fatalf("seed previous snapshot: %v", err)
