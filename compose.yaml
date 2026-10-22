@@ -10,13 +10,13 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        case "$MIHOMO_SECRET" in
+        case "$$MIHOMO_SECRET" in
           ""|replace-with-a-long-random-secret)
             echo "MIHOMO_SECRET is a placeholder. Set a unique random secret in .env (for example: openssl rand -hex 32)." >&2
             exit 1
             ;;
         esac
-        if [ "${#MIHOMO_SECRET}" -lt 32 ]; then
+        if [ "$${#MIHOMO_SECRET}" -lt 32 ]; then
           echo "MIHOMO_SECRET must contain at least 32 characters." >&2
           exit 1
         fi
