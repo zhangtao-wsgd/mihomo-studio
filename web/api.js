@@ -863,12 +863,45 @@ ${result.limitations}`);
       return `<div class="event"><div class="event-icon" style="background:${meta.tag==='green'?'#e5f8ef':meta.tag==='red'?'#fff0f0':'#eef2ff'};color:${meta.tag==='green'?'#159a72':meta.tag==='red'?'#d14343':'#4169e1'}">${meta.icon}</div>`
         + `<div class="event-body"><div class="event-title">${esc(d.candidateId)} <span class="tag ${meta.tag}">${esc(meta.label)}</span>${isCurrent?' <span class="tag green">当前生效</span>':''}${d.operation==='rollback'?' <span class="tag blue">rollback</span>':''}</div>`
         + `<div class="event-sub">${esc(opLabel)} · SHA ${esc(sha)}${sha?'…':''}</div>`
-        + `<div class="event-sub">${esc(d.runtimeMessage || '')}</div>${action}</div>`
+        + `<div class="event-sub">${esc(d.runtimeMessage || '')}</div>${action}`
+        + `<button class="btn btn-secondary" style="margin-top:7px;padding:5px 8px" data-deployment-events="${esc(d.id)}">查看操作事件</button>`
+        + `<div class="event-sub" data-deployment-events-container hidden></div></div>`
         + `<div class="event-time">${formatDeploymentTime(d.startedAt)}</div></div>`;
     }).join('');
     container.querySelectorAll('[data-rollback]').forEach(button => {
       button.addEventListener('click', () => rollbackDeployment(button.dataset.rollback));
     });
+    container.querySelectorAll('[data-deployment-events]').forEach(button => {
+      button.addEventListener('click', () => toggleDeploymentEvents(button));
+    });
+  }
+  async function toggleDeploymentEvents(button) {
+    const row = button.closest('.event');
+    const panel = row && row.querySelector('[data-deployment-events-container]');
+    if (!panel) return;
+    if (!panel.hidden) {
+      panel.hidden = true;
+      button.textContent = '查看操作事件';
+      return;
+    }
+    panel.hidden = false;
+    button.textContent = '收起操作事件';
+    if (panel.dataset.loaded === 'true') return;
+    panel.textContent = '正在读取事件…';
+    try {
+      const payload = await request(`${API}/deployments/${encodeURIComponent(button.dataset.deploymentEvents)}/events`);
+      const events = payload.items || [];
+      panel.innerHTML = events.length ? events.map(event =>
+        `<div style="padding:7px 0;border-top:1px solid var(--border)">`
+        + `<strong>${esc(event.action || '未知操作')}</strong> · ${esc(event.outcome || '状态未知')}`
+        + `<div>${esc(formatDeploymentTime(event.createdAt))} · ${esc(event.resourceType || '')} / ${esc(event.resourceId || '')}</div>`
+        + (event.detailJson ? `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 0">${esc(event.detailJson)}</pre>` : '')
+        + `</div>`
+      ).join('') : '该发布记录没有关联的操作事件。';
+      panel.dataset.loaded = 'true';
+    } catch (error) {
+      panel.textContent = '读取操作事件失败：' + error.message;
+    }
   }
   // loadDeployments is called on demand and after any publish so the panel never shows a
   // stale record set.
