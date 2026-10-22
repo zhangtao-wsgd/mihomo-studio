@@ -70,7 +70,7 @@ func (s *Store) SaveSubscription(ctx context.Context, x domain.Subscription) err
 	if x.LastStatus == "" {
 		x.LastStatus = "never_fetched"
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO subscriptions(id,name,url,enabled,last_fetch_at,last_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,url=excluded.url,enabled=excluded.enabled,last_status=excluded.last_status,updated_at=excluded.updated_at`, x.ID, x.Name, x.URL, boolInt(x.Enabled), nullableTime(x.LastFetchAt), x.LastStatus, stamp(x.CreatedAt), stamp(x.UpdatedAt))
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO subscriptions(id,name,url,enabled,last_fetch_at,last_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,url=excluded.url,enabled=excluded.enabled,updated_at=excluded.updated_at`, x.ID, x.Name, x.URL, boolInt(x.Enabled), nullableTime(x.LastFetchAt), x.LastStatus, stamp(x.CreatedAt), stamp(x.UpdatedAt))
 	return err
 }
 func (s *Store) DeleteSubscription(ctx context.Context, id string) error {
