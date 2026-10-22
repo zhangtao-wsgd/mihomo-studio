@@ -41,6 +41,9 @@ func (s *Server) Handler() http.Handler {
 	// Reports whether the panel currently requires a credential, so the client can tell
 	// "wrong secret" apart from "no secret configured" without probing a protected route.
 	mux.HandleFunc("GET /api/v1/auth/status", s.authStatus)
+	// Confirms a supplied credential. It sits behind requireAuth on purpose: reaching the
+	// handler at all proves the token was accepted.
+	mux.HandleFunc("GET /api/v1/auth/verify", s.authVerify)
 	mux.HandleFunc("GET /api/v1/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /api/v1/subscriptions", s.saveSubscription)
 	mux.HandleFunc("GET /api/v1/subscriptions/{id}", s.getSubscription)
@@ -108,6 +111,12 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		"header": adminTokenHeader,
 		"reason": authStatusReason(s.Auth),
 	})
+}
+
+// authVerify confirms the presented credential. requireAuth already rejected anything
+// invalid, so a response here means the token is accepted.
+func (s *Server) authVerify(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"valid": true})
 }
 
 // authStatusReason explains why a credential is or is not required, using the same

@@ -181,3 +181,41 @@ func TestAuthStatusReportsRequirement(t *testing.T) {
 		}
 	}
 }
+
+// The login form uses this endpoint to confirm a password before loading the console, so it
+// must be protected: reaching a 200 proves the token was accepted.
+func TestAuthVerifyRequiresValidToken(t *testing.T) {
+	server := &Server{Auth: AuthConfig{Token: "s3cret"}}
+
+	anonymous := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/auth/verify", nil)
+	anonymous.Host = "127.0.0.1:8080"
+	anonymousResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(anonymousResponse, anonymous)
+	if anonymousResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous verify: status = %d, want 401", anonymousResponse.Code)
+	}
+
+	authorized := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/auth/verify", nil)
+	authorized.Host = "127.0.0.1:8080"
+	authorized.Header.Set(adminTokenHeader, "s3cret")
+	authorizedResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(authorizedResponse, authorized)
+	if authorizedResponse.Code != http.StatusOK {
+		t.Fatalf("authorized verify: status = %d, want 200", authorizedResponse.Code)
+	}
+	if strings.Contains(authorizedResponse.Body.String(), "s3cret") {
+		t.Fatal("verify response must not echo the secret")
+	}
+}
+
+// A panel with no credential configured must let the console load without a password.
+func TestAuthVerifyOpenWhenDisabled(t *testing.T) {
+	server := &Server{Auth: AuthConfig{AllowUnauthenticated: true}}
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/auth/verify", nil)
+	request.Host = "127.0.0.1:8080"
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 when authentication is disabled", response.Code)
+	}
+}

@@ -28,8 +28,11 @@
     catch (e) { state.online = false; setConnection(false); throw new Error('无法连接控制平面，请确认服务已启动。'); }
     if (response.status === 401) {
       state.online = false;
-      promptForToken('控制平面要求访问令牌，与 Mihomo 控制器使用同一个 secret。');
-      throw new Error('需要访问令牌才能读取或修改配置。');
+      // The credential is missing or rejected. Return to the gate instead of retrying, so a
+      // wrong password is corrected rather than hammering the API.
+      setToken('');
+      showLoginGate('密码不正确，请重新输入。');
+      throw new Error('需要管理密码才能读取或修改配置。');
     }
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
@@ -39,18 +42,67 @@
     if (response.status === 204) return null;
     return response.json();
   }
-  // Prompt once per page load so a wrong secret does not spawn a prompt per request.
-  let tokenPromptOpen = false;
-  function promptForToken(reason) {
-    if (tokenPromptOpen) return;
-    tokenPromptOpen = true;
-    const entered = window.prompt(reason + '\n\n请输入访问令牌（留空则取消）：', '');
-    tokenPromptOpen = false;
-    if (entered === null) return;
-    if (!entered.trim()) { toast('未提供访问令牌，无法读取配置。'); return; }
-    setToken(entered.trim());
-    refreshAll();
-    loadDeployments();
+  // Login gate. There is no user or role model by design: one password, the same
+  // MIHOMO_SECRET that protects the controller. The gate is a convenience; the server
+  // rejects every unauthenticated API call regardless of what the page shows.
+  function showLoginGate(message) {
+    const gate = $('loginGate');
+    const app = $('appRoot');
+    if (gate) gate.style.display = 'flex';
+    if (app) app.style.display = 'none';
+    const error = $('loginError');
+    if (error) {
+      if (message) { error.textContent = message; error.style.display = ''; }
+      else { error.style.display = 'none'; }
+    }
+    const intro = $('loginIntro');
+    if (intro) {
+      intro.textContent = auth.required
+        ? '请输入管理密码。面板与 Mihomo 控制器使用同一个 secret。'
+        : '本实例未启用密码校验，可直接进入。';
+    }
+    const field = $('loginPassword');
+    if (field) { field.value = ''; setTimeout(() => field.focus(), 30); }
+  }
+  function hideLoginGate() {
+    const gate = $('loginGate');
+    const app = $('appRoot');
+    if (gate) gate.style.display = 'none';
+    if (app) app.style.display = '';
+  }
+  // Submitting the gate verifies the password against the protected verify endpoint, so a
+  // wrong password is reported before the console tries to load anything.
+  async function submitLogin(event) {
+    if (event) event.preventDefault();
+    const field = $('loginPassword');
+    const button = $('loginSubmit');
+    const candidate = field ? field.value.trim() : '';
+    if (!candidate) { showLoginGate('请输入管理密码。'); return; }
+    setToken(candidate);
+    if (button) { button.disabled = true; button.textContent = '正在验证…'; }
+    try {
+      await request('/api/v1/auth/verify');
+      const error = $('loginError');
+      if (error) error.style.display = 'none';
+      hideLoginGate();
+      setLogoutVisible(true);
+      startConsole();
+    } catch (e) {
+      // request() already cleared the token and reopened the gate on 401.
+      if (auth.token) showLoginGate(e.message);
+    } finally {
+      if (button) { button.disabled = false; button.textContent = '登录'; }
+    }
+  }
+  function logout() {
+    setToken('');
+    state.online = false;
+    showLoginGate('已退出登录。');
+  }
+  // The logout control only makes sense when a credential is actually in play.
+  function setLogoutVisible(visible) {
+    const button = $('logoutButton');
+    if (button) button.style.display = visible ? '' : 'none';
   }
   async function loadAuthStatus() {
     try {
@@ -61,10 +113,15 @@
       if (badge) {
         badge.style.display = auth.required ? '' : 'none';
         badge.innerHTML = auth.required
-          ? `<strong>需要访问令牌。</strong>面板与 Mihomo 控制器共用 MIHOMO_SECRET。请求通过 <code>${esc(auth.header)}</code> 头携带，不会出现在地址栏。`
+          ? `<strong>已用管理密码登录。</strong>面板与 Mihomo 控制器共用 MIHOMO_SECRET；请求通过 <code>${esc(auth.header)}</code> 头携带，不会出现在地址栏。`
           : '';
       }
-    } catch (_) { /* status is informational; a failure must not block the panel */ }
+      return auth.required;
+    } catch (_) {
+      // The status endpoint is public, so a failure here means the server is unreachable;
+      // treat it as "no credential needed" and let the normal connection error surface.
+      return false;
+    }
   }
   function setConnection(online) {
     state.online = online;
@@ -76,7 +133,7 @@
       const notice = $('workspaceNotice'); if (notice) notice.insertAdjacentElement('afterend', badge);
     }
     badge.innerHTML = online
-      ? '<strong>已连接真实后端。</strong>终端、代理组、规则和订阅列表及保存操作使用持久化 API；总览统计、完整版本历史与系统设置仍为示例内容；节点矩阵读取真实快照，延迟和可用性尚未探测。保存配置不会立即改变运行实例，必须生成候选并完成发布。'
+      ? '<strong>已连接真实后端。</strong>订阅、终端、代理组、规则、节点清单、发布历史与总览统计均来自持久化数据；运行状态来自 Mihomo 控制器实时上报，连不上时会明确显示为未知而不是正常。保存配置不会立即改变运行实例，必须生成候选并完成发布。'
       : '<strong>后端尚未连接。</strong>当前无法读取或保存配置。为避免误导，写入操作会提示失败，不会将模拟数据报告为已保存。';
     badge.style.borderColor = online ? '#bdebd7' : '#f1d5a8';
     badge.style.background = online ? '#f0fbf6' : '#fff8ec';
@@ -601,20 +658,40 @@ ${result.limitations}`);
     }
   }
   window.rollback = function(version) { toast('请从下方「版本历史」中选择真实发布记录进行回滚；演示标签不能用于回滚。'); };
+  // Loads everything the console shows. Called once after the gate is satisfied, and again
+  // after login, so the panel never renders before the credential is known to be valid.
+  function startConsole() {
+    hideLoginGate();
+    refreshAll();
+    // History and overview load independently of the CRUD refresh so a failing list or an
+    // unreachable controller cannot blank the whole console.
+    loadDeployments();
+    loadOverview();
+  }
+  window.logout = logout;
   // Subscription refresh is an explicit operation; it updates the current input snapshot but never publishes a candidate.
   document.addEventListener('DOMContentLoaded', () => {
     const addSubButton=document.querySelector('#page-subscriptions .page-head .btn-primary');
     if(addSubButton) addSubButton.addEventListener('click',()=>{state.editingSubscriptionId=null;$('subName').value='';$('subUrl').value='';},true);
     const newRuleButton=document.querySelector('#page-rules .page-head .btn-primary');
     if(newRuleButton) newRuleButton.addEventListener('click',()=>{state.editingRuleId=null;$('newRulePriority').value='100';const title=$('ruleModal').querySelector('h2');if(title)title.textContent='新建流量规则';},true);
-    // Discover the credential requirement before the first data load so the operator is
-    // prompted once, with an explanation, instead of seeing a bare 401.
-    loadAuthStatus().then(() => {
-      refreshAll();
-      // History and overview load independently of the CRUD refresh so a failing list or an
-      // unreachable controller cannot blank the whole console.
-      loadDeployments();
-      loadOverview();
+    const loginForm = $('loginForm');
+    if (loginForm) loginForm.addEventListener('submit', submitLogin);
+
+    // Decide whether to show the gate before any protected request runs. An unauthenticated
+    // panel must never flash stale or empty console chrome first.
+    loadAuthStatus().then(async required => {
+      if (!required) { startConsole(); return; }
+      setLogoutVisible(true);
+      if (!auth.token) { showLoginGate(); return; }
+      // A stored token may be stale (for example after the secret was rotated). Verify it
+      // before trusting it, so the operator gets a clear re-prompt instead of a 401 storm.
+      try {
+        await request('/api/v1/auth/verify');
+        startConsole();
+      } catch (_) {
+        showLoginGate('保存的密码已失效，请重新输入。');
+      }
     });
   });
 })();

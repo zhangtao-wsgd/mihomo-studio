@@ -48,21 +48,36 @@ sleep 8
 step "Container state"
 podman compose -f compose.yaml -f compose.podman.yaml ps 2>&1
 
+# A published port is only reachable on the address it was bound to. When the bind address is
+# a specific LAN IP, probing 127.0.0.1 fails even though the service is healthy, so derive
+# the probe host from the configured bind instead of assuming loopback.
+probe_host() {
+  local bind="${1:-127.0.0.1}"
+  case "$bind" in
+    ""|0.0.0.0|"::"|"[::]") printf '127.0.0.1' ;;
+    *) printf '%s' "$bind" ;;
+  esac
+}
+STUDIO_PROBE="$(probe_host "${STUDIO_BIND_IP:-127.0.0.1}")"
+CONTROLLER_PROBE="$(probe_host "${CONTROLLER_BIND_IP:-127.0.0.1}")"
+info "studio probe:   http://$STUDIO_PROBE:8080"
+info "controller probe: http://$CONTROLLER_PROBE:9090"
+
 step "Wait for Studio health"
 health=""
 for _ in $(seq 1 40); do
-  health=$(curl -sf http://127.0.0.1:8080/healthz 2>/dev/null) && break
+  health=$(curl -sf "http://$STUDIO_PROBE:8080/healthz" 2>/dev/null) && break
   sleep 2
 done
-if [[ -n "$health" ]]; then ok "healthz: $health"; else bad "healthz never responded"; podman compose -f compose.yaml -f compose.podman.yaml logs --no-color --tail=60 mihomo-studio; exit 1; fi
+if [[ -n "$health" ]]; then ok "healthz: $health"; else bad "healthz never responded on $STUDIO_PROBE:8080"; podman compose -f compose.yaml -f compose.podman.yaml logs --no-color --tail=60 mihomo-studio; exit 1; fi
 
 step "Wait for Mihomo controller"
 ctrl=""
 for _ in $(seq 1 30); do
-  ctrl=$(curl -sf -H "Authorization: Bearer $MIHOMO_SECRET" http://127.0.0.1:9090/version 2>/dev/null) && break
+  ctrl=$(curl -sf -H "Authorization: Bearer $MIHOMO_SECRET" "http://$CONTROLLER_PROBE:9090/version" 2>/dev/null) && break
   sleep 2
 done
-if [[ -n "$ctrl" ]]; then ok "controller: $ctrl"; else bad "controller never responded"; fi
+if [[ -n "$ctrl" ]]; then ok "controller: $ctrl"; else bad "controller never responded on $CONTROLLER_PROBE:9090"; fi
 
 step "Stack logs (studio)"
 podman compose -f compose.yaml -f compose.podman.yaml logs --no-color --tail=25 mihomo-studio 2>&1

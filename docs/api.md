@@ -18,6 +18,12 @@ time. A wrong or missing credential returns `401` with a `WWW-Authenticate: Toke
 `GET /api/v1/auth/status` reports whether a credential is required and which header to use.
 It never returns the secret.
 
+`GET /api/v1/auth/verify` is protected: a `200` means the presented password was accepted.
+The login form uses it to validate before loading the console. It never echoes the secret.
+
+There is no user or role model. One password protects the panel, and it is the same
+`MIHOMO_SECRET` that protects the Mihomo controller.
+
 These paths are always reachable without a credential because they carry no desired state:
 `/healthz`, `/api.js`, `/`, `/prototype-v6.html`, and `/api/v1/auth/status`.
 
@@ -39,7 +45,7 @@ listener reachable from the network is refused at startup. See
 - `GET|POST /api/v1/rules`
 - `PUT|DELETE /api/v1/rules/{id}`
 
-IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID鈥攏ot a display name. Terminal `proxyGroupId` is a proxy-group ID.
+IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID閳ユ攺ot a display name. Terminal `proxyGroupId` is a proxy-group ID.
 
 ## Configuration lifecycle
 
@@ -118,10 +124,10 @@ Create a rule using the proxy-group ID returned by the previous request:
 
 For dynamic group membership, `memberFilter` supports `subscription`, `region`, `keyword`, and `regex`. `subscription` matches the subscription name prefix, while `region` and `keyword` are case-insensitive substrings of the rendered node name. `maxLatencyMs` is rejected until reliable runtime latency samples are available.
 
-### 鑺傜偣娓呭崟
+### 閼哄倻鍋ｅ〒鍛礋
 
-`GET /api/v1/nodes` 浠?`subscription_snapshots` 涓瘡涓闃呭敮涓€鏍囪涓?current 鐨勬垚鍔熷揩鐓ц鍙?`proxies`锛岃繑鍥炶妭鐐圭ǔ瀹氭淳鐢?ID銆佸師濮嬭妭鐐瑰悕銆佹覆鏌撳悕銆佽闃呮潵婧愩€佽妭鐐圭被鍨嬪拰鍩轰簬鍚嶇О鐨勫湴鍖烘帹鏂€傝妭鐐?ID 鐢辫闃?ID 涓庡師濮嬭妭鐐瑰悕鐢熸垚锛涘悓鍚嶈妭鐐规潵鑷笉鍚岃闃呮椂浠嶄繚鎸佷笉鍚?ID銆傚湴鍖哄瓧娈靛彧鏄竴绉嶅悕绉板惎鍙戝紡鎺ㄦ柇锛宍regionInferred` 鐢ㄤ簬鏄庣‘鏍囪瘑鍏堕潪鏉冨▉鎬с€傝妭鐐规帰娴嬬粨鏋滈€氳繃 `node_probe_results` 鎸佷箙鍖栵紱鎺㈡祴缁撴灉鍙唬琛ㄦ帰娴嬫椂杩愯涓殑 Mihomo 閰嶇疆锛屼笉鑳借瘉鏄庡皻鏈彂甯冪殑璁㈤槄鑺傜偣鍙敤銆?
-姝ゆ帴鍙ｄ笉浼氫富鍔ㄥ埛鏂拌闃呫€俙POST /api/v1/nodes/probe` 浼氶€氳繃 Mihomo controller 瀵瑰綋鍓嶈繍琛岄厤缃腑鐨勮妭鐐瑰彂璧风湡瀹炲欢杩熸帰娴嬶紱鏈姞杞界殑鑺傜偣鏍囪涓?`not_loaded`锛屾帶鍒跺櫒鏈厤缃椂杩斿洖 503銆傛病鏈夋寔涔呭寲蹇収鐨勮闃呬笉浼氫骇鐢熻妭鐐硅褰曪紱灏氭湭鎺㈡祴鐨?`latencyMs` 涓?`null`銆乣status=unmeasured`锛屼笉鑳芥妸鑺傜偣瑙嗕负鍙敤鎴栦笉鍙敤銆?
+`GET /api/v1/nodes` 娴?`subscription_snapshots` 娑擃厽鐦℃稉顏囶吂闂冨懎鏁稉鈧弽鍥唶娑?current 閻ㄥ嫭鍨氶崝鐔锋彥閻撗嗩嚢閸?`proxies`閿涘矁绻戦崶鐐跺Ν閻愬湱菙鐎规碍娣抽悽?ID閵嗕礁甯慨瀣Ν閻愮懓鎮曢妴浣硅閺屾挸鎮曢妴浣筋吂闂冨懏娼靛┃鎰┾偓浣藉Ν閻愬湱琚崹瀣嫲閸╄桨绨崥宥囆為惃鍕勾閸栫儤甯归弬顓溾偓鍌濆Ν閻?ID 閻㈣精顓归梼?ID 娑撳骸甯慨瀣Ν閻愮懓鎮曢悽鐔稿灇閿涙稑鎮撻崥宥堝Ν閻愯娼甸懛顏冪瑝閸氬矁顓归梼鍛娴犲秳绻氶幐浣风瑝閸?ID閵嗗倸婀撮崠鍝勭摟濞堥潧褰ч弰顖欑缁夊秴鎮曠粔鏉挎儙閸欐垵绱￠幒銊︽焽閿涘畭regionInferred` 閻劋绨弰搴ｂ€橀弽鍥槕閸忓爼娼弶鍐ㄢ枆閹佲偓鍌濆Ν閻愯甯板ù瀣波閺嬫粓鈧俺绻?`node_probe_results` 閹镐椒绠欓崠鏍电幢閹恒垺绁寸紒鎾寸亯閸欘亙鍞悰銊﹀赴濞村妞傛潻鎰攽娑擃厾娈?Mihomo 闁板秶鐤嗛敍灞肩瑝閼冲€熺槈閺勫骸鐨婚張顏勫絺鐢啰娈戠拋銏ゆ閼哄倻鍋ｉ崣顖滄暏閵?
+濮濄倖甯撮崣锝勭瑝娴兼矮瀵岄崝銊ュ煕閺傛媽顓归梼鍛偓淇橮OST /api/v1/nodes/probe` 娴兼岸鈧俺绻?Mihomo controller 鐎电懓缍嬮崜宥堢箥鐞涘矂鍘ょ純顔昏厬閻ㄥ嫯濡悙鐟板絺鐠ч婀＄€圭偛娆㈡潻鐔稿赴濞村绱遍張顏勫鏉炵晫娈戦懞鍌滃仯閺嶅洩顔囨稉?`not_loaded`閿涘本甯堕崚璺烘珤閺堫亪鍘ょ純顔芥鏉╂柨娲?503閵嗗倹鐥呴張澶嬪瘮娑斿懎瀵茶箛顐ゅ弾閻ㄥ嫯顓归梼鍛瑝娴兼矮楠囬悽鐔诲Ν閻愮顔囪ぐ鏇幢鐏忔碍婀幒銏＄ゴ閻?`latencyMs` 娑?`null`閵嗕梗status=unmeasured`閿涘奔绗夐懗鑺ュΩ閼哄倻鍋ｇ憴鍡曡礋閸欘垳鏁ら幋鏍︾瑝閸欘垳鏁ら妴?
 
 ### Proxy group node references
 `memberNodeIds` is the stable member reference used by new clients. `memberNodeNames` remains for compatibility with existing records and older clients. When both are present, candidate building uses `memberNodeIds` for manual membership. If a referenced node is missing from the candidate built from enabled subscriptions, validation fails and asks the operator to review membership.

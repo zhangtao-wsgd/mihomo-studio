@@ -528,3 +528,54 @@ failure mode — silent mojibake rather than a write error — is easy to miss.
 - The settings page remains read-only; nothing there is editable, by design, until a
   configuration API exists.
 - Audit events are consumed only by the overview activity feed.
+
+## Password login increment
+
+The panel gained a credential in the previous increment, but the browser asked for it with
+`window.prompt()`. That is a crude interaction: it cannot show an error inline, it reopens
+unpredictably, and it gives no way to sign out.
+
+There is deliberately **no user or role model**, as requested. One password — the same
+`MIHOMO_SECRET` that protects the controller — is the whole authentication story.
+
+### What changed
+
+- **`GET /api/v1/auth/verify`** — sits behind `requireAuth`, so a `200` proves the presented
+  password was accepted. The login form uses it to validate before loading anything. It
+  never echoes the secret.
+- **Login gate in the shell** — a centred card with a password field, inline error line, and
+  a single submit action. Shown only when `/auth/status` reports `required`.
+- **No console flash before authentication.** The startup path resolves the credential
+  requirement and, if needed, verifies the stored password before any protected request
+  runs. Previously the console chrome rendered first and then failed.
+- **Stale password handling.** A stored password from a previous session is verified on
+  load; if the secret was rotated the gate reappears with "保存的密码已失效，请重新输入。"
+  rather than producing a burst of 401s.
+- **Sign out** — a topbar control that clears the stored password and returns to the gate.
+- The obsolete prompt code path was removed, and the connection banner no longer claims that
+  overview statistics, deployment history, and settings are sample content, which stopped
+  being true once those were wired to the backend.
+
+### Security posture
+
+The gate is a convenience, not the control. The server rejects every unauthenticated API
+call regardless of what the page renders; hiding the console is purely presentational. The
+password is still sent in a header and kept in `sessionStorage`, so closing the tab forgets
+it.
+
+### Verification
+
+- Two tests for the verify endpoint: anonymous and wrong tokens return `401`, the correct
+  token returns `200` without echoing the secret, and the endpoint is open when no
+  credential is configured.
+- Against the deployed stack: the served shell contains every gate element, `/auth/verify`
+  returns `401` for anonymous and wrong passwords and `200` for the correct one, the shell
+  and `/healthz` stay reachable without a password, and the authenticated overview still
+  reports the live controller version and health score.
+- `go test ./...`: 72 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green.
+
+### Still open after this increment
+
+- CSRF tokens, per-user accounts, and TLS.
+- The settings page remains read-only until a configuration API exists.
+- No session expiry beyond closing the tab.
