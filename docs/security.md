@@ -49,7 +49,6 @@ check must keep working, and the status endpoint only reports whether a credenti
 required. `authStatus` never echoes the secret.
 
 ### What this does not protect against
-
 This is a trusted-LAN access control, not a multi-user authentication system:
 
 - Anyone who learns `MIHOMO_SECRET` has full control of the panel and the controller.
@@ -60,7 +59,6 @@ This is a trusted-LAN access control, not a multi-user authentication system:
 - Compromising the browser's `sessionStorage` grants access until the tab closes.
 
 ## What a LAN binding means
-
 Setting `STUDIO_BIND_IP` or `CONTROLLER_BIND_IP` to a LAN address changes the exposure in a
 way that is easy to underestimate:
 
@@ -75,6 +73,36 @@ way that is easy to underestimate:
 Reaching these ports requires network access to the host. They are not reachable from the
 public Internet unless the host is separately forwarded or exposed, but they are reachable
 by every device on the same subnet, including guests and internet-of-things devices.
+
+## Port 9090 is an API, not a web page
+
+A browser opening `http://<host>:9090/` receives `401`, and `http://<host>:9090/ui/` receives
+`404`. Both are correct behaviour, not a misconfiguration:
+
+- `/` and `/version` require `Authorization: Bearer <MIHOMO_SECRET>`. A browser address bar
+  cannot send that header, so it is answered with `401`.
+- `/ui/` only works when the generated config sets `external-ui` to a directory of static
+  dashboard files. This project does not do that, because it ships the official dashboard as
+  its own container instead of duplicating it inside the runtime.
+
+To browse a dashboard, use the `metacubexd` service:
+
+```sh
+docker compose --profile diagnostics up -d
+```
+
+`DASHBOARD_BIND_IP` controls where it is published (loopback by default). **When it is served
+on a LAN address you must also list that exact origin in `DASHBOARD_ORIGINS`**, because the
+controller compares the browser's `Origin` header byte for byte and rejects unknown origins:
+
+```sh
+DASHBOARD_BIND_IP=192.168.152.130
+DASHBOARD_ORIGINS=http://192.168.152.130:8081,http://127.0.0.1:8081
+```
+
+Without the matching origin the dashboard loads but its calls to the controller fail with a
+CORS error, even though the port is open. The origins are written into each generated
+candidate, so a publish is required before a changed list takes effect.
 
 ## Deliberate decision on record
 

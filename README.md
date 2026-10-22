@@ -1,4 +1,4 @@
-﻿# Mihomo Studio
+# Mihomo Studio
 
 Mihomo Studio is a self-hosted control plane for one official MetaCubeX Mihomo instance. This repository is the first implementation slice, not a claim that every prototype interaction is already connected.
 
@@ -30,8 +30,8 @@ This slice deliberately does not implement subscription-provider-specific parsin
 3. Keep `MIHOMO_BIND_IP=127.0.0.1` for local-only proxy access. Only set it to the host LAN IP if trusted terminal devices must connect.
 4. Run `docker compose up -d --build`. The Studio UI binds to loopback; the Mihomo controller is published only on host loopback (`127.0.0.1:9090`) for the optional local dashboard and is not exposed to the LAN, while the proxy port is loopback-only unless `MIHOMO_BIND_IP` is changed.
 5. Check service state with `docker compose ps` and `docker compose logs -f --tail=200`.
-6. Open `http://127.0.0.1:8080`. The V6 page now uses the backend for subscription, terminal, proxy-group, and global-rule CRUD plus candidate creation and explicit publish. Dashboard metrics, node inventory, full deployment history, and settings remain prototype-only and are visibly identified as such.
-7. Optional official runtime dashboard: `docker compose --profile diagnostics up -d`, then open `http://127.0.0.1:8081`.
+6. Open `http://127.0.0.1:8080` and sign in with `MIHOMO_SECRET`. Subscriptions, terminals, proxy groups, rules, node inventory, deployment history, overview metrics, and the generated YAML all come from the backend. Settings are read-only and show the values the running process actually uses. Runtime status is reported honestly: an unreachable controller shows as unknown, never as healthy.
+7. Optional official runtime dashboard: `docker compose --profile diagnostics up -d`, then open `http://127.0.0.1:8081`. This is the way to browse the runtime; `http://<host>:9090/` is a JSON API that answers `401` to a browser, and `http://<host>:9090/ui/` answers `404` unless `external-ui` is configured. To serve the dashboard on a LAN address, set both `DASHBOARD_BIND_IP` and a matching `DASHBOARD_ORIGINS`, then publish a new candidate — see [docs/security.md](docs/security.md#port-9090-is-an-api-not-a-web-page).
 
 ## Rootless Podman deployment
 

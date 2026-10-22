@@ -54,7 +54,18 @@ func main() {
 		activePath = "./data/runtime/active/config.yaml"
 	}
 	controllerURL := os.Getenv("MIHOMO_CONTROLLER_URL")
-	builder := &config.Builder{DB: db.DB, SnapshotDir: snapshotDir, ControllerSecret: secret, ControllerURL: controllerURL, MihomoBinary: envOr("MIHOMO_BINARY", "/usr/local/bin/mihomo")}
+	// The dashboard origin must match the address a browser actually uses, so a LAN-served
+	// dashboard needs its origin listed explicitly. Leaving this unset keeps the loopback
+	// defaults, which is correct for a local-only deployment.
+	dashboardOrigins := splitCommaList(os.Getenv("DASHBOARD_ORIGINS"))
+	builder := &config.Builder{
+		DB:               db.DB,
+		SnapshotDir:      snapshotDir,
+		ControllerSecret: secret,
+		ControllerURL:    controllerURL,
+		MihomoBinary:     envOr("MIHOMO_BINARY", "/usr/local/bin/mihomo"),
+		DashboardOrigins: dashboardOrigins,
+	}
 	var runtime workflow.Runtime
 	if controller := controllerURL; controller != "" {
 		runtime = &workflow.HTTPRuntime{BaseURL: controller, Secret: secret}
@@ -82,4 +93,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCommaList parses a comma-separated environment value, dropping blanks so a trailing
+// comma or an empty variable does not produce an empty origin entry.
+func splitCommaList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }

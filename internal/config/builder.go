@@ -31,6 +31,10 @@ type Builder struct {
 	ControllerSecret string
 	ControllerURL    string
 	MihomoBinary     string
+	// DashboardOrigins lists the origins allowed to call the controller from a browser.
+	// Empty means the loopback defaults, which cover the bundled diagnostics dashboard only
+	// when it is reached on this host.
+	DashboardOrigins []string
 }
 type subscriptionRow struct {
 	ID, Name, URL string
@@ -370,7 +374,7 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 	cfg := map[string]any{
 		"mixed-port": 7890, "allow-lan": true, "bind-address": "*", "mode": "rule", "log-level": "info",
 		"external-controller":      "0.0.0.0:9090",
-		"external-controller-cors": map[string]any{"allow-origins": []string{"http://127.0.0.1:8081", "http://localhost:8081"}, "allow-private-network": false},
+		"external-controller-cors": map[string]any{"allow-origins": b.corsOrigins(), "allow-private-network": false},
 		"secret":                   b.ControllerSecret, "proxies": proxies, "proxy-groups": mihomoGroups, "rules": mihomoRules,
 	}
 	body, err := yaml.Marshal(cfg)
@@ -458,6 +462,18 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		c.CreatedAt = parsedTime
 	}
 	return c, nil
+}
+
+// corsOrigins returns the browser origins allowed to call the controller.
+//
+// The controller compares the Origin header exactly, so a dashboard reached at a LAN address
+// is a different origin than loopback. Hard-coding localhost therefore made a LAN-served
+// dashboard fail with a CORS error even though the port was open.
+func (b *Builder) corsOrigins() []string {
+	if len(b.DashboardOrigins) > 0 {
+		return b.DashboardOrigins
+	}
+	return []string{"http://127.0.0.1:8081", "http://localhost:8081"}
 }
 
 func writeImmutable(path string, body []byte) error {

@@ -30,6 +30,11 @@ services:
       ACTIVE_CONFIG_PATH: /runtime/active/config.yaml
       MIHOMO_CONTROLLER_URL: http://mihomo:9090
       MIHOMO_SECRET: ${MIHOMO_SECRET:?Set MIHOMO_SECRET in .env}
+      # The generated config lists these origins for controller CORS. A dashboard reached on a
+      # LAN address is a different origin than loopback, so serving one there requires listing
+      # it here or the browser's controller calls are rejected. Comma-separated; empty keeps
+      # the loopback defaults.
+      DASHBOARD_ORIGINS: ${DASHBOARD_ORIGINS:-}
     ports:
       # Loopback by default. Set STUDIO_BIND_IP to bind the control UI to a LAN address.
       # The control API has no authentication yet, so a LAN binding lets anyone on that
@@ -56,7 +61,10 @@ services:
     profiles: [diagnostics]
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8081:80"
+      # Loopback by default. Set DASHBOARD_BIND_IP to serve the official dashboard on a LAN
+      # address; the Studio then needs DASHBOARD_ORIGINS to list that exact origin, because
+      # the controller rejects browser calls from an origin it was not told about.
+      - "${DASHBOARD_BIND_IP:-127.0.0.1}:8081:80"
     depends_on:
       mihomo:
         condition: service_started

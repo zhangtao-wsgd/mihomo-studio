@@ -61,3 +61,31 @@ func TestWriteImmutableRefusesDifferentContent(t *testing.T) {
 		t.Fatal("different bytes must not overwrite an immutable snapshot")
 	}
 }
+
+// The controller compares Origin exactly, so a dashboard served from a LAN address must be
+// listed explicitly. The default only covers loopback and must not silently widen.
+func TestCorsOriginsDefaultIsLoopbackOnly(t *testing.T) {
+	got := (&Builder{}).corsOrigins()
+	want := []string{"http://127.0.0.1:8081", "http://localhost:8081"}
+	if len(got) != len(want) {
+		t.Fatalf("corsOrigins() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("corsOrigins() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCorsOriginsUsesConfiguredList(t *testing.T) {
+	configured := []string{"http://192.168.152.130:8081", "https://studio.example"}
+	got := (&Builder{DashboardOrigins: configured}).corsOrigins()
+	if len(got) != len(configured) {
+		t.Fatalf("corsOrigins() = %v, want %v", got, configured)
+	}
+	for i := range configured {
+		if got[i] != configured[i] {
+			t.Fatalf("corsOrigins() = %v, want %v", got, configured)
+		}
+	}
+}
