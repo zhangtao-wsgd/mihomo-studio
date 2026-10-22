@@ -26,6 +26,9 @@ type Server struct {
 	Workflow *workflow.Service
 	Logger   *slog.Logger
 	Auth     AuthConfig
+	// ActiveConfigPath is the runtime config file the service writes. It is reported by the
+	// overview so the settings page shows the path actually in use.
+	ActiveConfigPath string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -70,7 +73,33 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/deployments/{id}/verify", s.verifyDeployment)
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", s.rollbackDeployment)
 	mux.HandleFunc("GET /api/v1/audit-events", s.listAuditEvents)
+	mux.HandleFunc("GET /api/v1/overview", s.getOverview)
+	mux.HandleFunc("GET /api/v1/runtime", s.getRuntime)
 	return requestLog(s.Logger, securityHeaders(requireAuth(s.Auth, sameOrigin(mux))))
+}
+
+// getOverview returns the dashboard payload assembled from persisted state.
+func (s *Server) getOverview(w http.ResponseWriter, r *http.Request) {
+	if s.Workflow == nil || s.Workflow.Builder == nil {
+		fail(w, 503, errors.New("overview is unavailable"))
+		return
+	}
+	overview, err := s.Workflow.Builder.BuildOverview(r.Context(), s.ActiveConfigPath, s.Auth.Enabled())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, overview)
+}
+
+// getRuntime reports controller reachability. An unreachable controller is reported as
+// unreachable rather than as a failure, because the running state is then simply unknown.
+func (s *Server) getRuntime(w http.ResponseWriter, r *http.Request) {
+	if s.Workflow == nil || s.Workflow.Builder == nil {
+		fail(w, 503, errors.New("runtime status is unavailable"))
+		return
+	}
+	writeJSON(w, 200, s.Workflow.Builder.Runtime(r.Context()))
 }
 func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{

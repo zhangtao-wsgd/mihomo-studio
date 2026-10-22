@@ -1,4 +1,4 @@
-﻿# HTTP API (first implementation slice)
+# HTTP API (first implementation slice)
 
 The control API is bound to `127.0.0.1:8080` by Compose.
 
@@ -53,6 +53,16 @@ IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-g
 - `POST /api/v1/deployments/{id}/verify` explicitly retries the exact active candidate reload when a prior result is uncertain.
 - `POST /api/v1/deployments/{id}/rollback` with `{"confirm":true}` rolls back a verified deployment to its recorded previous verified candidate. A rollback appends a new deployment record; the original is retained with status `rolled_back`.
 - `GET /api/v1/audit-events` returns recent audit events across all resources, newest first, with `limit` and `offset`.
+- `GET /api/v1/overview` returns the dashboard payload in one consistent read: `runtime`, `activeDeployment`, `deployments` (recent 5), `nodes` (counts by knowledge state), `counts` (desired-state inventory), `subscriptions` (name and status only, never the URL), `health`, `config` (paths actually in use), and `auth`.
+- `GET /api/v1/runtime` returns `configured`, `reachable`, `version`, `checkedAt`, and `error`. An unreachable controller is reported as unreachable, not as down: the running state is then unknown.
+
+### Health score
+
+`/overview` includes a derived `health` object with `score`, `grade`, `blockers`, `warnings`, and a `checks` array. Every deduction corresponds to one entry in `checks` carrying its own `severity`, `title`, `detail`, `count`, and `deduction`, so the number can always be explained from the response alone.
+
+Grades are `healthy` (100), `attention` (70-99), `degraded` (<70), and `blocked` whenever a blocking check fires; a blocker overrides the numeric score.
+
+Node reachability is **not** part of the score. A node pointing at a private or documentation address reports `unavailable` while the configuration is valid, so availability is reported as counts instead of affecting the verdict.
 
 `previousCandidateId` is only populated once a deployment reaches `verified`, because it is
 read from the last active candidate, which is recorded only after the runtime confirms the

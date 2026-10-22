@@ -40,33 +40,25 @@
 <div id="authNotice" class="workspace-notice" style="display:none"></div>
 <section class="page active" id="page-overview">
   <div class="page-head"><div><div class="eyebrow">CONTROL CENTER / 01</div><h1>配置总览</h1><div class="subtitle">掌握当前配置、运行状态与最近变更。所有编辑均先进入草稿，不会直接影响运行中的内核。</div></div><div class="actions"><button class="btn btn-secondary" onclick="toast('已刷新运行时状态')">↻ 刷新状态</button><button class="btn btn-primary" onclick="goPage('releases')">↥ 创建发布预览</button></div></div>
-  <div class="grid stats">
-    <div class="stat-card"><div class="stat-top">运行状态 <span class="stat-icon">◉</span></div><div class="stat-value" style="font-size:24px">运行正常</div><div class="stat-foot"><strong>● 在线</strong> · Mihomo v1.19.12</div></div>
-    <div class="stat-card"><div class="stat-top">当前生效版本 <span class="stat-icon">◈</span></div><div class="stat-value">r024</div><div class="stat-foot">SHA-256 <span class="muted">7a3f…c91e</span></div></div>
-    <div class="stat-card"><div class="stat-top">可用代理节点 <span class="stat-icon">⌘</span></div><div class="stat-value">128 <span style="font-size:13px;color:#8b95a8;font-weight:500">/ 132</span></div><div class="stat-foot"><strong>97.0%</strong> 当前可用率</div></div>
-    <div class="stat-card"><div class="stat-top">待处理检查项 <span class="stat-icon" style="background:#fff6e5;color:#b7791f">⚑</span></div><div class="stat-value">2</div><div class="stat-foot">1 条警告 · 1 条环境提醒</div></div>
+  <div class="grid stats" id="overviewStats">
+    <div class="stat-card"><div class="stat-top">运行状态 <span class="stat-icon">◉</span></div><div class="stat-value" style="font-size:24px">读取中</div><div class="stat-foot">正在查询 Mihomo 控制器</div></div>
+    <div class="stat-card"><div class="stat-top">当前生效版本 <span class="stat-icon">◈</span></div><div class="stat-value">—</div><div class="stat-foot">尚无已核验发布</div></div>
+    <div class="stat-card"><div class="stat-top">代理节点 <span class="stat-icon">⌘</span></div><div class="stat-value">—</div><div class="stat-foot">读取订阅快照中</div></div>
+    <div class="stat-card"><div class="stat-top">配置健康度 <span class="stat-icon" style="background:#fff6e5;color:#b7791f">⚑</span></div><div class="stat-value">—</div><div class="stat-foot">基于可核对检查项</div></div>
   </div>
   <div class="grid dashboard-grid">
-    <div class="card"><div class="card-head"><div><div class="card-title">发布状态</div><div class="card-desc">单一 Mihomo 实例 · 生产配置与运行状态</div></div><span class="tag green">● 已确认生效</span></div>
-      <div class="release-hero"><div class="release-top"><strong>r024 · 优化分流规则与节点筛选</strong><span class="tag green">发布成功</span></div><p>配置已通过静态检查与 Mihomo 内核校验，热载后运行状态核验通过。</p><div class="release-meta"><span>发布时间 <b>今天 14:32</b></span><span>变更 <b>+8 / −3</b></span><span>耗时 <b>1.8 秒</b></span></div></div>
+    <div class="card"><div class="card-head"><div><div class="card-title">发布状态</div><div class="card-desc">最近一次已核验发布；未经核验的结果不会被当作生效</div></div><span class="tag blue" id="overviewRuntimeTag">未知</span></div>
+      <div id="overviewRelease"><div class="notice">尚未读取发布记录。</div></div>
       <div class="card-head" style="margin-bottom:8px"><div class="card-title">最近活动</div><span class="link" onclick="goPage('releases')">查看全部 →</span></div>
-      <div class="timeline">
-        <div class="event"><div class="event-icon">✓</div><div class="event-body"><div class="event-title">发布 r024 已确认生效</div><div class="event-sub">发布流水线完成 · SHA-256 已记录</div></div><div class="event-time">14:32</div></div>
-        <div class="event"><div class="event-icon">≋</div><div class="event-body"><div class="event-title">更新规则草稿</div><div class="event-sub">新增 3 条自定义规则，尚未发布</div></div><div class="event-time">14:18</div></div>
-        <div class="event"><div class="event-icon">⇄</div><div class="event-body"><div class="event-title">订阅「主力机场」探测完成</div><div class="event-sub">解析 132 个节点，较上次减少 2 个</div></div><div class="event-time">13:56</div></div>
-      </div>
+      <div class="timeline" id="overviewActivity"><div class="event"><div class="event-body"><div class="event-title">读取中…</div></div></div></div>
     </div>
-    <div class="card"><div class="card-head"><div><div class="card-title">配置健康度</div><div class="card-desc">基于最近一次预览校验报告</div></div><span class="link" onclick="goPage('releases')">查看报告 →</span></div>
-      <div style="display:flex;align-items:center;gap:20px;margin:8px 0 23px"><svg width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="#edf0f6" stroke-width="9"/><circle cx="50" cy="50" r="40" fill="none" stroke="#28b58b" stroke-width="9" stroke-linecap="round" stroke-dasharray="226 251" transform="rotate(-90 50 50)"/><text x="50" y="48" text-anchor="middle" font-size="22" font-weight="750" fill="#1b2940">90</text><text x="50" y="64" text-anchor="middle" font-size="9" fill="#8b95a8">/ 100</text></svg><div><div style="font-size:15px;font-weight:750">整体健康</div><div class="muted" style="font-size:11px;margin-top:4px">未发现阻断发布的问题</div><div style="margin-top:9px"><span class="tag green">BLOCK 0</span> <span class="tag amber">WARN 1</span></div></div></div>
-      <div class="health-list">
-        <div class="health-row"><div class="health-icon">⌘</div><div class="health-copy"><strong>节点引用完整性</strong><span>所有策略组引用均有效</span><div class="progress"><span style="width:100%"></span></div></div><div class="health-value">100%</div></div>
-        <div class="health-row"><div class="health-icon">≋</div><div class="health-copy"><strong>规则目标校验</strong><span>规则目标均可解析</span><div class="progress"><span style="width:100%"></span></div></div><div class="health-value">100%</div></div>
-        <div class="health-row"><div class="health-icon">⇄</div><div class="health-copy"><strong>订阅节点变化</strong><span>节点数量较上次减少 2 个</span><div class="progress"><span style="width:82%;background:#e5ad45"></span></div></div><div class="health-value" style="color:#b7791f">关注</div></div>
-      </div>
+    <div class="card"><div class="card-head"><div><div class="card-title">配置健康度</div><div class="card-desc">每项扣分都可追溯到一条可核对的事实</div></div><span class="link" onclick="goPage('releases')">查看发布 →</span></div>
+      <div id="overviewHealthSummary"><div class="notice">读取中…</div></div>
+      <div class="health-list" id="overviewHealthChecks"></div>
     </div>
   </div>
   <div class="grid bottom-grid">
-    <div class="card"><div class="card-head"><div><div class="card-title">最近发布</div><div class="card-desc">每次发布均保留不可变配置产物与校验报告</div></div><span class="link" onclick="goPage('releases')">版本历史 →</span></div><div class="table-wrap"><table><thead><tr><th>版本</th><th>变更说明</th><th>结果</th><th>时间</th></tr></thead><tbody><tr><td><b>r024</b><div class="sub-cell">7a3f…c91e</div></td><td>优化分流规则与节点筛选</td><td><span class="tag green">已生效</span></td><td>今天 14:32</td></tr><tr><td><b>r023</b><div class="sub-cell">1b82…d012</div></td><td>更新主力机场订阅</td><td><span class="tag green">已生效</span></td><td>昨天 19:06</td></tr><tr><td><b>r022</b><div class="sub-cell">d923…ab47</div></td><td>新增直连规则</td><td><span class="tag green">已生效</span></td><td>10 月 18 日</td></tr></tbody></table></div></div>
+    <div class="card"><div class="card-head"><div><div class="card-title">最近发布</div><div class="card-desc">每次发布均保留不可变配置产物</div></div><span class="link" onclick="goPage('releases')">版本历史 →</span></div><div class="table-wrap"><table><thead><tr><th>候选</th><th>操作</th><th>结果</th><th>时间</th></tr></thead><tbody id="overviewDeployments"><tr><td colspan="4" class="muted" style="padding:18px;text-align:center">读取中…</td></tr></tbody></table></div></div>
     <div class="card"><div class="card-head"><div><div class="card-title">快速入口</div><div class="card-desc">常用配置任务</div></div></div><div class="health-list"><div class="health-row"><div class="health-icon">⇄</div><div class="health-copy"><strong>管理订阅源</strong><span>更新、探测与规则来源设置</span></div><button class="btn btn-secondary" onclick="goPage('subscriptions')">进入 →</button></div><div class="health-row"><div class="health-icon">◉</div><div class="health-copy"><strong>调整策略组</strong><span>管理节点筛选和组内策略</span></div><button class="btn btn-secondary" onclick="goPage('groups')">进入 →</button></div><div class="health-row"><div class="health-icon">↥</div><div class="health-copy"><strong>检查并发布草稿</strong><span>预览差异、校验并受控发布</span></div><button class="btn btn-primary" onclick="goPage('releases')">开始 →</button></div></div></div>
   </div>
 </section>
@@ -180,17 +172,15 @@
 </section>
 <section class="page" id="page-settings">
   <div class="page-head"><div><div class="eyebrow">SYSTEM / 08</div><h1>系统设置</h1><div class="subtitle">管理唯一运行实例、发布安全、访问控制与数据保留策略。</div></div><div class="actions"><button class="btn btn-primary" onclick="toast('设置已保存')">保存设置</button></div></div>
-  <div class="settings-grid"><div class="card settings-nav"><button class="active">运行实例</button><button>草稿与发布</button><button>安全与访问</button><button>版本保留</button><button>系统信息</button></div><div class="card"><div class="card-head"><div><div class="card-title">运行实例</div><div class="card-desc">控制平面管理的 Mihomo 实例</div></div><span class="tag green">运行中</span></div>
-    <div class="setting-row"><div><strong>实例名称</strong><span>用于发布任务和审计记录中的实例标识</span></div><input style="width:190px;border:1px solid #dfe4ed;border-radius:7px;padding:8px" value="mihomo-primary"></div>
-    <div class="setting-row"><div><strong>Mihomo 版本</strong><span>发布校验应针对此版本执行</span></div><div style="font-weight:700;font-size:12px">v1.19.12 <span class="tag green">已检测</span></div></div>
-    <div class="setting-row"><div><strong>管理 API</strong><span>仅容器内部网络访问，不映射至宿主机公网</span></div><span class="tag green">容器内网</span></div>
-    <div class="setting-row"><div><strong>平台管理访问</strong><span>允许局域网访问；首次使用需完成管理员认证初始化</span></div><span class="tag amber">需认证</span></div>
+  <div class="settings-grid"><div class="card settings-nav"><button class="active">运行实例</button><button>草稿与发布</button><button>安全与访问</button><button>版本保留</button><button>系统信息</button></div><div class="card"><div class="card-head"><div><div class="card-title">运行实例</div><div class="card-desc">以下数值来自正在运行的服务进程，不是示例</div></div><span class="tag blue">只读</span></div>
+    <div class="setting-row"><div><strong>Mihomo 版本</strong><span>由控制器 /version 实时上报；未配置控制器时无法得知</span></div><div style="font-weight:700;font-size:12px" data-setting-value>读取中…</div></div>
+    <div class="setting-row"><div><strong>控制器地址</strong><span>发布时热载与运行核验使用的地址</span></div><code style="font-size:11px;color:#52617c" data-setting-value>读取中…</code></div>
+    <div class="setting-row"><div><strong>平台管理访问</strong><span>面板与内核对同一 MIHOMO_SECRET 使用共享凭据</span></div><div style="font-weight:700;font-size:12px" data-setting-value>读取中…</div></div>
+    <div class="setting-row"><div><strong>运行配置路径</strong><span>发布时原子写入的活动配置文件位置</span></div><code style="font-size:11px;color:#52617c" data-setting-value>读取中…</code></div>
+    <div class="setting-row"><div><strong>快照目录</strong><span>不可变订阅输入与候选产物的存放位置</span></div><code style="font-size:11px;color:#52617c" data-setting-value>读取中…</code></div>
+    <div class="setting-row"><div><strong>Mihomo 二进制</strong><span>候选校验执行 mihomo -t 时使用的可执行文件</span></div><code style="font-size:11px;color:#52617c" data-setting-value>读取中…</code></div>
     <div class="setting-row"><div><strong>持久化存储</strong><span>单实例元数据与任务状态</span></div><span class="tag blue">SQLite</span></div>
-    <div class="setting-row"><div><strong>备份状态</strong><span>数据库、配置版本与恢复元数据需保持一致</span></div><button class="btn btn-secondary" onclick="toast('演示：将创建一致性备份')">立即备份</button></div>
-    <div class="setting-row"><div><strong>运行配置路径</strong><span>活动配置由管理器发布，外部修改将触发一致性告警</span></div><code style="font-size:11px;color:#52617c">/etc/mihomo/config.yaml</code></div>
-    <div class="setting-row"><div><strong>运行状态核验</strong><span>热载后检查 API 状态、活动配置摘要与健康指标</span></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
-    <div class="setting-row"><div><strong>版本保留数量</strong><span>历史元数据长期保留；活动配置和唯一恢复产物不可清理</span></div><select style="border:1px solid #dfe4ed;border-radius:7px;padding:8px"><option>最近 20 个产物</option><option>最近 50 个产物</option><option>保留全部产物</option></select></div>
-    <div class="notice">安全原则：管理 API 不直接暴露到宿主机；订阅凭据和 API Secret 不进入普通日志、差异预览或公开导出文件。</div>
+    <div class="notice">以上为服务端实际运行参数，通过环境变量配置，面板中不可修改。修改后需重启服务生效。订阅凭据与 API Secret 不会出现在本页或日志中。</div>
     <div class="card" style="margin-top:16px;box-shadow:none;background:#fbfcff"><div class="card-head"><div><div class="card-title">产品与工程设计准则</div><div class="card-desc">用于评审原型、总体架构和代码实现的共同标准</div></div><span class="tag blue">项目准则</span></div>
       <div class="setting-row"><div><strong>设计即说明</strong><span>用户能从界面理解功能、操作步骤、状态及潜在影响；关键决策不藏在术语或文档里。</span></div><span class="tag blue">产品设计</span></div>
       <div class="setting-row"><div><strong>架构即说明</strong><span>模块职责、依赖方向、数据流和接口契约应直接表达系统边界与协作方式。</span></div><span class="tag blue">架构设计</span></div>

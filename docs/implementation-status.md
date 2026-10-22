@@ -435,3 +435,96 @@ This is trusted-LAN access control, not multi-user authentication:
 - CSRF tokens, per-user accounts, and TLS.
 - The overview dashboard statistics and the settings page remain prototype-only.
 - `/audit-events` is readable but no UI surface consumes it yet.
+
+## Overview and settings increment
+
+The overview page and the settings page were entirely static sample data: a hard-coded
+`r024` release, `128/132` nodes, a `90/100` health score, a timeline of invented events, and
+settings showing `/etc/mihomo/config.yaml`, an instance named `mihomo-primary`, and
+"Mihomo v1.19.12". None of it came from the backend, and none of it changed when the real
+state changed.
+
+### Endpoints added
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/overview` | One consistent read for the whole dashboard: runtime status, active deployment, recent deployments, node counts, desired-state counts, subscriptions, health, and the config paths actually in use. |
+| `GET /api/v1/runtime` | Controller reachability and version, bounded by a 3-second timeout. |
+
+Assembling the overview server-side avoids six client requests that could disagree with
+each other and lets the counts come from a single pass over the data.
+
+`RuntimeStatus` keeps three facts separate: `configured` (was a controller URL supplied),
+`reachable` (did it answer), and `version`. An unreachable controller is reported as
+unreachable with the transport error preserved, never as "down" — the running state is then
+simply unknown.
+
+Subscriptions appear by name and status only. The URL is never included, because providers
+embed access tokens in it; a test asserts the response contains no `url` field.
+
+### Health is derived, explainable, and does not invent numbers
+
+The previous `90/100` was unsourced. The replacement is a score whose every deduction maps
+to a returned check with its own title, detail, count, and cost:
+
+| Check | Severity | Deduction | Condition |
+|---|---|---|---|
+| `node_references` | block | −25 | A group references a node ID absent from the current snapshot |
+| `group_members` | block | −25 | A manual group has no members, or a dynamic filter matches nothing |
+| `rule_targets` | block | −20 | An enabled rule targets neither `DIRECT`, `REJECT`, a group ID, nor a legacy group name |
+| `inputs` | block | −20 | No enabled subscription, or no nodes |
+| `subscription_freshness` | warn | −10 each, capped at −20 | Last refresh was `fetch_failed` or `invalid_format` |
+| `deployment_certainty` | warn | −10 | A deployment's runtime outcome was never confirmed |
+| `probe_coverage` | warn | −5 | More than half of the nodes have no real latency sample |
+
+Grades: `healthy` at 100, `attention` at 70–99, `degraded` below 70, and `blocked` whenever
+any blocking check fires — a blocker overrides the numeric score, because "cannot produce a
+valid config" outranks partial credit.
+
+**Node reachability deliberately does not affect the score.** A node pointing at a private
+or documentation address reports `unavailable` in a lab while the configuration is
+perfectly valid; scoring on it would produce a misleading verdict. Availability is reported
+separately as counts. A test pins this behaviour.
+
+Verified against a running binary: an empty installation scores 80 and reports `blocked`
+for `inputs`; after importing the operator's real 45-node subscription it scores 95 with
+`attention` and a single `probe_coverage` warning, which is exactly the designed outcome.
+
+### UI
+
+The overview renders the four stat cards, the release hero, the health score with one row
+per check showing its own deduction, the recent-deployments table, and an activity feed read
+from `/audit-events`. Every empty state states what is missing rather than showing a sample
+value: an unconfigured controller reads "未配置", an unreachable one reads "无法连接" with
+the note that this does not mean stopped.
+
+The settings page now shows the values the running process actually uses — controller
+address, active config path, snapshot directory, Mihomo binary, kernel version, and whether
+a credential is required — each marked read-only, with a note that they come from
+environment variables and take effect after a restart. Rows that had no backing configuration
+(`mihomo-primary`, a retention selector, a backup button, a verification toggle) were
+removed rather than left looking editable.
+
+### Incident during this increment
+
+A PowerShell `Set-Content -Encoding utf8` round trip corrupted multi-byte characters in
+`web/api.js`, breaking its syntax. The file was restored with `git checkout` and the change
+re-applied through the editor, which writes UTF-8 correctly. Recorded here because the
+failure mode — silent mojibake rather than a write error — is easy to miss.
+
+### Verification
+
+- 13 health tests: the 100-point baseline, each blocking check, the deduction cap, the
+  ignored-disabled-rule case, the reachability exemption, grade boundaries, and floor and
+  precedence rules.
+- 4 overview/API tests: empty-database shapes (`[]` not `null`), no URL leak, runtime
+  unconfigured reporting, and overview requiring auth.
+- `go test ./...`: 70 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green.
+- `scripts/overview-check.sh` was added to inspect the payload against a live process.
+
+### Still open after this increment
+
+- CSRF tokens, per-user accounts, and TLS.
+- The settings page remains read-only; nothing there is editable, by design, until a
+  configuration API exists.
+- Audit events are consumed only by the overview activity feed.

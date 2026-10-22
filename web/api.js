@@ -354,9 +354,174 @@ ${result.limitations}`);
       toast(`发布状态：${deployment.status}。${deployment.runtimeMessage||''}`);
       // The recorded history is the source of truth, so re-read it rather than assuming.
       await loadDeployments();
-    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); await loadDeployments(); }
+      await loadOverview();
+    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); await loadDeployments(); await loadOverview(); }
   };
-  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); await loadDeployments(); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
+  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); await loadDeployments(); await loadOverview(); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
+  // The overview is assembled server-side so the dashboard reflects one consistent read
+  // instead of six requests that can disagree with each other.
+  const healthGradeMeta = {
+    healthy:   { label:'健康', tag:'green' },
+    attention: { label:'需要关注', tag:'amber' },
+    degraded:  { label:'需处理', tag:'amber' },
+    blocked:   { label:'存在阻断项', tag:'red' }
+  };
+  function formatOverviewTime(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? esc(value) : d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  }
+  function renderOverview(data) {
+    const stats = document.querySelectorAll('#overviewStats .stat-card');
+    if (stats.length >= 4) {
+      // Runtime status distinguishes "not configured" from "unreachable". Neither is
+      // rendered as healthy, because neither establishes that traffic is flowing.
+      const rt = data.runtime || {};
+      let runtimeValue = '未配置', runtimeFoot = '未设置控制器地址，运行状态未知';
+      if (rt.configured && rt.reachable) { runtimeValue = '已连接'; runtimeFoot = 'Mihomo ' + (rt.version || '未知版本'); }
+      else if (rt.configured) { runtimeValue = '无法连接'; runtimeFoot = '控制器未响应，不代表已停止'; }
+      stats[0].querySelector('.stat-value').textContent = runtimeValue;
+      stats[0].querySelector('.stat-foot').textContent = runtimeFoot;
+
+      const active = data.activeDeployment;
+      stats[1].querySelector('.stat-value').textContent = active ? active.candidateId : '—';
+      stats[1].querySelector('.stat-foot').innerHTML = active
+        ? 'SHA-256 <span class="muted">' + esc((active.candidateSha256 || '').slice(0, 12)) + '…</span>'
+        : '尚无已核验的发布';
+
+      const nodes = data.nodes || {};
+      stats[2].querySelector('.stat-value').textContent = String(nodes.total || 0);
+      stats[2].querySelector('.stat-foot').textContent = nodes.total
+        ? '已测可用 ' + (nodes.available || 0) + ' · 未测 ' + ((nodes.unmeasured || 0) + (nodes.notLoaded || 0))
+        : '尚未生成节点快照';
+
+      const health0 = data.health || {};
+      const grade0 = healthGradeMeta[health0.grade] || { label:'未知' };
+      stats[3].querySelector('.stat-value').textContent = health0.score != null ? String(health0.score) : '—';
+      stats[3].querySelector('.stat-foot').textContent = grade0.label + ' · 阻断 ' + (health0.blockers || 0) + ' · 警告 ' + (health0.warnings || 0);
+    }
+
+    const tag = $('overviewRuntimeTag');
+    if (tag) {
+      const rt = data.runtime || {};
+      const online = rt.configured && rt.reachable;
+      tag.textContent = !rt.configured ? '未配置控制器' : (online ? '运行时已连接' : '运行时未知');
+      tag.className = 'tag ' + (online ? 'green' : 'amber');
+      tag.title = rt.error || '';
+    }
+
+    const releaseBox = $('overviewRelease');
+    if (releaseBox) {
+      const active = data.activeDeployment;
+      releaseBox.innerHTML = active
+        ? '<div class="release-hero"><div class="release-top"><strong>' + esc(active.candidateId) + '</strong><span class="tag green">已核验</span></div>'
+          + '<p>' + esc(active.runtimeMessage || '') + '</p>'
+          + '<div class="release-meta"><span>发布时间 <b>' + formatOverviewTime(active.startedAt) + '</b></span>'
+          + '<span>操作 <b>' + esc(active.operation) + '</b></span>'
+          + '<span>SHA <b>' + esc((active.candidateSha256 || '').slice(0, 12)) + '</b></span></div></div>'
+        : '<div class="notice">还没有已核验的发布。生成候选并确认发布后，这里会显示实际生效的版本。</div>';
+    }
+
+    // Health renders the score plus every contributing check with its own deduction, so the
+    // number always carries its evidence.
+    const health = data.health || {};
+    const grade = healthGradeMeta[health.grade] || { label:'未知' };
+    const summary = $('overviewHealthSummary');
+    if (summary) {
+      const pct = Math.max(0, Math.min(100, health.score || 0));
+      const stroke = health.grade === 'blocked' ? '#d14343' : (health.grade === 'healthy' ? '#28b58b' : '#e5ad45');
+      summary.innerHTML = '<div style="display:flex;align-items:center;gap:20px;margin:8px 0 18px">'
+        + '<svg width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="none" stroke="#edf0f6" stroke-width="9"/>'
+        + '<circle cx="50" cy="50" r="40" fill="none" stroke="' + stroke + '" stroke-width="9" stroke-linecap="round" stroke-dasharray="'
+        + Math.round(251 * pct / 100) + ' 251" transform="rotate(-90 50 50)"/>'
+        + '<text x="50" y="48" text-anchor="middle" font-size="22" font-weight="750" fill="#1b2940">' + (health.score != null ? health.score : '—') + '</text>'
+        + '<text x="50" y="64" text-anchor="middle" font-size="9" fill="#8b95a8">/ 100</text></svg>'
+        + '<div><div style="font-size:15px;font-weight:750">' + esc(grade.label) + '</div>'
+        + '<div class="muted" style="font-size:11px;margin-top:4px">每项扣分都对应下方一条可核对的事实</div>'
+        + '<div style="margin-top:9px"><span class="tag ' + (health.blockers ? 'red' : 'green') + '">BLOCK ' + (health.blockers || 0) + '</span> '
+        + '<span class="tag amber">WARN ' + (health.warnings || 0) + '</span></div></div></div>';
+    }
+    const checkList = $('overviewHealthChecks');
+    if (checkList) {
+      const checks = health.checks || [];
+      checkList.innerHTML = checks.length ? checks.map(c => {
+        const badge = c.severity === 'block' ? '<span class="tag red">阻断</span>'
+          : c.severity === 'warn' ? '<span class="tag amber">警告</span>' : '<span class="tag green">通过</span>';
+        const icon = c.severity === 'ok' ? '✓' : (c.severity === 'block' ? '⚑' : '!');
+        const cost = c.deduction ? '−' + c.deduction : '—';
+        return '<div class="health-row"><div class="health-icon">' + icon + '</div>'
+          + '<div class="health-copy"><strong>' + esc(c.title) + '</strong><span>' + esc(c.detail) + '</span></div>'
+          + '<div class="health-value" style="text-align:right">' + badge
+          + '<div class="muted" style="font-size:10px;margin-top:3px">' + cost + '</div></div></div>';
+      }).join('') : '<div class="notice">暂无检查项。</div>';
+    }
+
+    const deployBody = $('overviewDeployments');
+    if (deployBody) {
+      const items = data.deployments || [];
+      deployBody.innerHTML = items.length ? items.map(d => {
+        const meta = deploymentStatusMeta[d.status] || { label: d.status, tag:'amber' };
+        return '<tr><td><b>' + esc(d.candidateId) + '</b><div class="sub-cell">' + esc((d.candidateSha256 || '').slice(0, 12)) + '…</div></td>'
+          + '<td>' + esc(d.operation) + '</td><td><span class="tag ' + meta.tag + '">' + esc(meta.label) + '</span></td>'
+          + '<td>' + formatOverviewTime(d.startedAt) + '</td></tr>';
+      }).join('') : '<tr><td colspan="4" class="muted" style="padding:18px;text-align:center">还没有发布记录</td></tr>';
+    }
+
+    const activity = $('overviewActivity');
+    if (activity) loadOverviewActivity(activity);
+    renderOverviewSettings(data);
+  }
+  // Recent activity comes from the audit trail, which is the only persisted lifecycle record.
+  async function loadOverviewActivity(container) {
+    try {
+      const payload = await request(API + '/audit-events?limit=8');
+      const items = payload.items || [];
+      container.innerHTML = items.length ? items.map(e => {
+        const tail = (e.action || '').split('.').pop();
+        const meta = deploymentStatusMeta[tail] || { icon:'·' };
+        return '<div class="event"><div class="event-icon">' + (meta.icon || '·') + '</div><div class="event-body">'
+          + '<div class="event-title">' + esc(e.action) + '</div>'
+          + '<div class="event-sub">' + esc(e.resourceType) + ' · ' + esc(e.resourceId) + '</div></div>'
+          + '<div class="event-time">' + formatOverviewTime(e.createdAt) + '</div></div>';
+      }).join('') : '<div class="event"><div class="event-body"><div class="event-title">还没有活动记录</div>'
+        + '<div class="event-sub">发布、核验与回滚会记录在这里。</div></div></div>';
+    } catch (e) {
+      container.innerHTML = '<div class="event"><div class="event-body"><div class="event-title">无法读取活动记录</div>'
+        + '<div class="event-sub">' + esc(e.message) + '</div></div></div>';
+    }
+  }
+  // The settings page shows the values the running process actually uses, replacing the
+  // sample paths it displayed before.
+  function renderOverviewSettings(data) {
+    const cfg = data.config || {};
+    const rt = data.runtime || {};
+    const values = {
+      'Mihomo 版本': !rt.configured ? '未配置控制器' : (rt.reachable ? (rt.version || '未知') : '控制器未响应'),
+      '控制器地址': cfg.controllerUrl || '未配置',
+      '平台管理访问': (data.auth && data.auth.required) ? '需要访问令牌（与内核 secret 相同）' : '未启用认证（仅限本机监听）',
+      '运行配置路径': cfg.activeConfigPath || '未配置',
+      '快照目录': cfg.snapshotDir || '未配置',
+      'Mihomo 二进制': cfg.mihomoBinary || '未配置'
+    };
+    document.querySelectorAll('#page-settings .setting-row').forEach(row => {
+      const strong = row.querySelector('strong');
+      const target = row.querySelector('[data-setting-value]');
+      if (strong && target && values[strong.textContent.trim()] !== undefined) {
+        target.textContent = values[strong.textContent.trim()];
+      }
+    });
+  }
+  async function loadOverview() {
+    try {
+      const data = await request(API + '/overview');
+      renderOverview(data);
+      return true;
+    } catch (e) {
+      const box = $('overviewRelease');
+      if (box) box.innerHTML = '<div class="notice">无法读取总览数据：' + esc(e.message) + '</div>';
+      return false;
+    }
+  }
   // Deployment history is read from the backend so the release center reflects what was
   // actually recorded, not a sample timeline. Only `verified` deployments may be rolled
   // back, and that gate is enforced by the server as well.
@@ -446,8 +611,10 @@ ${result.limitations}`);
     // prompted once, with an explanation, instead of seeing a bare 401.
     loadAuthStatus().then(() => {
       refreshAll();
-      // Load history independently of the rest so a failing list endpoint cannot blank the UI.
+      // History and overview load independently of the CRUD refresh so a failing list or an
+      // unreachable controller cannot blank the whole console.
       loadDeployments();
+      loadOverview();
     });
   });
 })();
