@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,8 +60,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/config-candidates/{id}", s.getCandidate)
 	mux.HandleFunc("GET /api/v1/config-candidates/{id}/inputs", s.getCandidateInputs)
 	mux.HandleFunc("POST /api/v1/config-candidates/{id}/publish", s.publishCandidate)
+	mux.HandleFunc("GET /api/v1/deployments", s.listDeployments)
+	mux.HandleFunc("GET /api/v1/deployments/{id}", s.getDeployment)
+	mux.HandleFunc("GET /api/v1/deployments/{id}/events", s.getDeploymentEvents)
 	mux.HandleFunc("POST /api/v1/deployments/{id}/verify", s.verifyDeployment)
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", s.rollbackDeployment)
+	mux.HandleFunc("GET /api/v1/audit-events", s.listAuditEvents)
 	return requestLog(s.Logger, securityHeaders(sameOrigin(mux)))
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +431,112 @@ func (s *Server) rollbackDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, d)
 }
+func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
+	limit, err := intQuery(r, "limit", defaultDeploymentPageSize)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	offset, err := intQuery(r, "offset", 0)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	filter := store.DeploymentFilter{
+		Limit:       limit,
+		Offset:      offset,
+		Status:      r.URL.Query().Get("status"),
+		Operation:   r.URL.Query().Get("operation"),
+		CandidateID: r.URL.Query().Get("candidateId"),
+	}
+	items, total, err := s.Store.ListDeployments(r.Context(), filter)
+	if err != nil {
+		status := 500
+		if errors.Is(err, store.ErrInvalidDeploymentFilter) {
+			status = 400
+		}
+		fail(w, status, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "limit": filter.Limit, "offset": filter.Offset})
+}
+
+func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
+	record, err := s.Store.Deployment(r.Context(), r.PathValue("id"))
+	if err != nil {
+		status := 500
+		if errors.Is(err, store.ErrNotFound) {
+			status = 404
+		}
+		fail(w, status, err)
+		return
+	}
+	writeJSON(w, 200, record)
+}
+
+// getDeploymentEvents exposes the audit trail of one deployment. An unknown deployment is
+// a 404 rather than an empty list, so a typo is distinguishable from a deployment that
+// genuinely recorded no events.
+func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.Store.Deployment(r.Context(), r.PathValue("id")); err != nil {
+		status := 500
+		if errors.Is(err, store.ErrNotFound) {
+			status = 404
+		}
+		fail(w, status, err)
+		return
+	}
+	events, err := s.Store.DeploymentEvents(r.Context(), r.PathValue("id"))
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": events})
+}
+
+func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
+	limit, err := intQuery(r, "limit", defaultDeploymentPageSize)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	offset, err := intQuery(r, "offset", 0)
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	events, err := s.Store.AuditEvents(r.Context(), limit, offset)
+	if err != nil {
+		status := 500
+		if errors.Is(err, store.ErrInvalidDeploymentFilter) {
+			status = 400
+		}
+		fail(w, status, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": events, "limit": limit, "offset": offset})
+}
+
+// defaultDeploymentPageSize keeps history responses bounded when the caller omits a limit.
+const defaultDeploymentPageSize = 20
+
+// intQuery reads an optional integer query parameter without silently coercing garbage to
+// zero, which would turn a client mistake into a plausible-looking empty result.
+func intQuery(r *http.Request, name string, fallback int) (int, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s cannot be negative", name)
+	}
+	return value, nil
+}
+
 func decode(r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
 	defer r.Body.Close()

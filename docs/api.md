@@ -1,4 +1,4 @@
-# HTTP API (first implementation slice)
+﻿# HTTP API (first implementation slice)
 
 The control API is intended for local use and is bound to `127.0.0.1:8080` by Compose. Do not expose it to a network until authentication and authorization are implemented.
 
@@ -16,7 +16,7 @@ The control API is intended for local use and is bound to `127.0.0.1:8080` by Co
 - `GET|POST /api/v1/rules`
 - `PUT|DELETE /api/v1/rules/{id}`
 
-IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID—not a display name. Terminal `proxyGroupId` is a proxy-group ID.
+IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-group ID鈥攏ot a display name. Terminal `proxyGroupId` is a proxy-group ID.
 
 ## Configuration lifecycle
 
@@ -24,8 +24,16 @@ IDs are stable opaque strings. Rule `target` is `DIRECT`, `REJECT`, or a proxy-g
 - `GET /api/v1/config-candidates/{id}` reads candidate metadata.
 - `GET /api/v1/config-candidates/{id}/inputs` lists the immutable subscription input snapshots and hashes used to build that candidate.
 - `POST /api/v1/config-candidates/{id}/publish` with `{"confirm":true}` starts an explicitly confirmed deployment.
+- `GET /api/v1/deployments` returns paged history, newest first. Query parameters: `limit` (1-100, default 20), `offset`, `status`, `operation`, `candidateId`. Response shape is `{"items":[...],"total":N,"limit":N,"offset":N}`. An invalid parameter returns `400` rather than an empty page.
+- `GET /api/v1/deployments/{id}` returns one deployment joined with its candidate `sha256`.
+- `GET /api/v1/deployments/{id}/events` returns that deployment's audit trail, oldest first. An unknown deployment returns `404`, not an empty list.
 - `POST /api/v1/deployments/{id}/verify` explicitly retries the exact active candidate reload when a prior result is uncertain.
-- `POST /api/v1/deployments/{id}/rollback` with `{"confirm":true}` rolls back a verified deployment to its recorded previous verified candidate.
+- `POST /api/v1/deployments/{id}/rollback` with `{"confirm":true}` rolls back a verified deployment to its recorded previous verified candidate. A rollback appends a new deployment record; the original is retained with status `rolled_back`.
+- `GET /api/v1/audit-events` returns recent audit events across all resources, newest first, with `limit` and `offset`.
+
+`previousCandidateId` is only populated once a deployment reaches `verified`, because it is
+read from the last active candidate, which is recorded only after the runtime confirms the
+reload. A deployment that was never verified therefore has no rollback target.
 
 Candidate build returns a `validation_failed` candidate when Mihomo rejects the YAML, with diagnostic text in `validationMessage`. Only `validated` or already `published` candidates can be published.
 
@@ -77,12 +85,10 @@ Create a rule using the proxy-group ID returned by the previous request:
 
 For dynamic group membership, `memberFilter` supports `subscription`, `region`, `keyword`, and `regex`. `subscription` matches the subscription name prefix, while `region` and `keyword` are case-insensitive substrings of the rendered node name. `maxLatencyMs` is rejected until reliable runtime latency samples are available.
 
-### 节点清单
+### 鑺傜偣娓呭崟
 
-`GET /api/v1/nodes` 从 `subscription_snapshots` 中每个订阅唯一标记为 current 的成功快照读取 `proxies`，返回节点稳定派生 ID、原始节点名、渲染名、订阅来源、节点类型和基于名称的地区推断。节点 ID 由订阅 ID 与原始节点名生成；同名节点来自不同订阅时仍保持不同 ID。地区字段只是一种名称启发式推断，`regionInferred` 用于明确标识其非权威性。节点探测结果通过 `node_probe_results` 持久化；探测结果只代表探测时运行中的 Mihomo 配置，不能证明尚未发布的订阅节点可用。
-
-此接口不会主动刷新订阅。`POST /api/v1/nodes/probe` 会通过 Mihomo controller 对当前运行配置中的节点发起真实延迟探测；未加载的节点标记为 `not_loaded`，控制器未配置时返回 503。没有持久化快照的订阅不会产生节点记录；尚未探测的 `latencyMs` 为 `null`、`status=unmeasured`，不能把节点视为可用或不可用。
-
+`GET /api/v1/nodes` 浠?`subscription_snapshots` 涓瘡涓闃呭敮涓€鏍囪涓?current 鐨勬垚鍔熷揩鐓ц鍙?`proxies`锛岃繑鍥炶妭鐐圭ǔ瀹氭淳鐢?ID銆佸師濮嬭妭鐐瑰悕銆佹覆鏌撳悕銆佽闃呮潵婧愩€佽妭鐐圭被鍨嬪拰鍩轰簬鍚嶇О鐨勫湴鍖烘帹鏂€傝妭鐐?ID 鐢辫闃?ID 涓庡師濮嬭妭鐐瑰悕鐢熸垚锛涘悓鍚嶈妭鐐规潵鑷笉鍚岃闃呮椂浠嶄繚鎸佷笉鍚?ID銆傚湴鍖哄瓧娈靛彧鏄竴绉嶅悕绉板惎鍙戝紡鎺ㄦ柇锛宍regionInferred` 鐢ㄤ簬鏄庣‘鏍囪瘑鍏堕潪鏉冨▉鎬с€傝妭鐐规帰娴嬬粨鏋滈€氳繃 `node_probe_results` 鎸佷箙鍖栵紱鎺㈡祴缁撴灉鍙唬琛ㄦ帰娴嬫椂杩愯涓殑 Mihomo 閰嶇疆锛屼笉鑳借瘉鏄庡皻鏈彂甯冪殑璁㈤槄鑺傜偣鍙敤銆?
+姝ゆ帴鍙ｄ笉浼氫富鍔ㄥ埛鏂拌闃呫€俙POST /api/v1/nodes/probe` 浼氶€氳繃 Mihomo controller 瀵瑰綋鍓嶈繍琛岄厤缃腑鐨勮妭鐐瑰彂璧风湡瀹炲欢杩熸帰娴嬶紱鏈姞杞界殑鑺傜偣鏍囪涓?`not_loaded`锛屾帶鍒跺櫒鏈厤缃椂杩斿洖 503銆傛病鏈夋寔涔呭寲蹇収鐨勮闃呬笉浼氫骇鐢熻妭鐐硅褰曪紱灏氭湭鎺㈡祴鐨?`latencyMs` 涓?`null`銆乣status=unmeasured`锛屼笉鑳芥妸鑺傜偣瑙嗕负鍙敤鎴栦笉鍙敤銆?
 
 ### Proxy group node references
 `memberNodeIds` is the stable member reference used by new clients. `memberNodeNames` remains for compatibility with existing records and older clients. When both are present, candidate building uses `memberNodeIds` for manual membership. If a referenced node is missing from the candidate built from enabled subscriptions, validation fails and asks the operator to review membership.

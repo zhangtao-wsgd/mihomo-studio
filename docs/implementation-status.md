@@ -255,6 +255,88 @@ line endings leaked a `\r` into the trailing URI of a list.
 
 - The Studio control API has no authentication and no CSRF tokens. See
   [security.md](security.md).
-- No `GET /api/v1/deployments` collection endpoint; the release history panel remains
-  prototype-only and cannot list or roll back to past deployments.
-- `audit_events` is written but never read.
+
+## Deployment history increment
+
+The release center could not show history at all: the only deployment routes were
+`POST /{id}/verify` and `POST /{id}/rollback`, and the single `FROM deployments` query in
+the codebase filtered by `WHERE id=?`. After a page refresh the UI lost every record and
+the rollback control could not point at anything real. `audit_events` was written but never
+read by any code path.
+
+### Endpoints added
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v1/deployments` | Paged history, newest first. `limit` (1–100, default 20), `offset`, `status`, `operation`, `candidateId`. Returns `items`, `total`, `limit`, `offset`. |
+| `GET /api/v1/deployments/{id}` | One deployment joined with its candidate `sha256`. |
+| `GET /api/v1/deployments/{id}/events` | That deployment's audit trail, oldest first. |
+| `GET /api/v1/audit-events` | Recent audit events across all resources, newest first. |
+
+History rows join `config_candidates` so the response carries `candidateSha256`, which lets
+the UI show a version identity without a request per row.
+
+### Behaviour chosen deliberately
+
+- **Invalid input fails loudly.** A non-integer or out-of-range `limit`/`offset`, an unknown
+  `status`, or an unknown `operation` returns `400`. Returning an empty page would have
+  looked like "no deployments" when the query itself was wrong.
+- **Empty is `[]`, never `null`.** The browser iterates `items` directly; a null would throw
+  before the first deployment exists. Pinned by tests at both the store and HTTP layers.
+- **Unknown IDs are `404`, not empty lists.** `/{id}/events` distinguishes a typo from a
+  deployment that genuinely recorded no events.
+- **The state machine was not touched.** Rollback still requires `verified` status and a
+  still-active candidate. The UI now explains which precondition is missing instead of
+  silently hiding the control: `published_unverified` and `unknown` say the outcome is
+  unconfirmed, and a first verified deployment says there is no earlier verified version to
+  return to.
+- **`previousCandidateId` stays empty until a deployment is `verified`.** It is read from
+  `app_state.active_candidate_id`, which is only written on a verified publish. This is
+  intentional: "previous known-good version" has no meaning before one exists.
+
+### UI
+
+`renderDeployments` replaces the static sample timeline in the release center. It renders
+every recorded deployment with its status, candidate hash, runtime message, and timestamp;
+offers "回滚到此版本" only where the server would accept it; and reloads after any publish,
+verify, or rollback so the panel always reflects persisted state. History loads
+independently of the rest of the page, so a failing list endpoint cannot blank the console.
+
+### Test coverage added
+
+The publish/rollback state machine previously had **zero** tests beyond `copyAtomic`. It now
+has seven, using a fake runtime that can model per-call outcomes:
+
+- publish without confirmation is refused and creates no deployment row
+- publish with no controller is recorded `published_unverified`, and `active_candidate_id`
+  stays unset so nothing can be rolled back from an unconfirmed deployment
+- verified publish records the active candidate and emits exactly one audit event
+- a rejected reload is recorded `failed`, and the previous active file is restored
+- an ambiguous transport failure is recorded `unknown`, never `failed` or `verified`
+- rollback of a non-verified deployment is refused
+- rollback of an unknown deployment is refused
+
+Plus eight store-level tests (ordering, pagination without overlap, filtering, invalid
+filters, not-found, event scoping and order) and six HTTP-level tests.
+
+### Verified end-to-end
+
+Against a real Mihomo v1.19.32 controller on loopback and the operator's live 45-node
+subscription:
+
+1. Publish #1 → `verified` (controller accepted, readiness check passed).
+2. Publish #2 with a proxy group and rule → `verified`, `previousCandidateId` recorded.
+3. `GET /deployments` → `total=2`, newest first, predecessor populated.
+4. Rollback of #2 → `verified`, operation `rollback`.
+5. History after rollback → `total=3`: a new rollback record, while the original publish is
+   retained as `rolled_back`. History is not rewritten.
+6. `GET /deployments/{id}/events` → `deployment.publish.verified` then
+   `deployment.publish.rolled_back`.
+
+`go test ./...`: 44 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green.
+
+### Still open after this increment
+
+- Authentication and CSRF remain unimplemented.
+- The overview dashboard statistics and the settings page are still prototype-only.
+- `audit_events` is now readable but no UI surface consumes `/audit-events` yet.

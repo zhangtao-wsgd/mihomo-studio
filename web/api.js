@@ -308,10 +308,90 @@ ${result.limitations}`);
       $('step3').className='step done'; $('step3').querySelector('.step-num').textContent='✓'; $('step4').className='step '+(deployment.status==='verified'?'done':'current'); $('step4').querySelector('.step-num').textContent=deployment.status==='verified'?'✓':'!';
       if(['unknown','published_unverified'].includes(deployment.status)) { let verify=$('verifyDeploymentButton'); if(!verify) { verify=document.createElement('button'); verify.id='verifyDeploymentButton'; verify.className='btn btn-secondary'; verify.textContent='核验运行状态'; $('releasePreview').querySelector('div[style*="justify-content:flex-end"]')?.prepend(verify); } verify.onclick=()=>verifyDeployment(deployment.id); verify.style.display='inline-block'; }
       toast(`发布状态：${deployment.status}。${deployment.runtimeMessage||''}`);
-    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); }
+      // The recorded history is the source of truth, so re-read it rather than assuming.
+      await loadDeployments();
+    } catch(e) { toast('发布未确认成功：'+e.message+'。请检查发布状态，不要盲目重复操作。'); await loadDeployments(); }
   };
-  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
-  window.rollback = function(version) { toast('该版本历史仍为原型静态展示；真实回滚必须从后端部署记录中选择，不支持按演示标签回滚。'); };
+  async function verifyDeployment(id) { try { const d=await request(`${API}/deployments/${id}/verify`,{method:'POST',body:JSON.stringify({})}); state.deployment=d; $('releaseStateTag').textContent=d.status; $('releaseStateTag').className='tag '+(d.status==='verified'?'green':'amber'); $('verifyDeploymentButton').style.display=d.status==='verified'?'none':'inline-block'; toast(`核验结果：${d.status}。${d.runtimeMessage||''}`); await loadDeployments(); } catch(e) { toast('运行核验未完成：'+e.message+'。状态仍按未知处理。'); } }
+  // Deployment history is read from the backend so the release center reflects what was
+  // actually recorded, not a sample timeline. Only `verified` deployments may be rolled
+  // back, and that gate is enforced by the server as well.
+  const deploymentStatusMeta = {
+    verified:            { label:'已核验', tag:'green', icon:'✓' },
+    published_unverified:{ label:'已发布·未核验', tag:'amber', icon:'!' },
+    unknown:             { label:'结果未知', tag:'amber', icon:'?' },
+    failed:              { label:'失败', tag:'red', icon:'×' },
+    rolled_back:         { label:'已回滚', tag:'blue', icon:'↶' },
+    publishing:          { label:'发布中', tag:'blue', icon:'↥' },
+    prepared:            { label:'已准备', tag:'blue', icon:'·' }
+  };
+  function formatDeploymentTime(value) {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return esc(value);
+    return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  }
+  function renderDeployments(payload) {
+    const container = $('deploymentHistory'); if (!container) return;
+    const items = (payload && payload.items) || [];
+    if (!items.length) {
+      container.innerHTML = '<div class="event"><div class="event-body"><div class="event-title">还没有发布记录</div><div class="event-sub">生成候选并确认发布后，这里会显示每一次发布与回滚的真实结果。</div></div></div>';
+      return;
+    }
+    container.innerHTML = items.map((d, index) => {
+      const meta = deploymentStatusMeta[d.status] || { label: d.status, tag:'amber', icon:'·' };
+      const isCurrent = index === 0 && d.status === 'verified';
+      const sha = (d.candidateSha256 || '').slice(0, 12);
+      const opLabel = d.operation === 'rollback' ? '回滚发布' : '发布';
+      // Rollback needs two recorded facts: this deployment was verified, and a previously
+      // verified candidate was active when it ran. Explain which one is missing instead of
+      // silently hiding the control, so the operator is not left guessing.
+      const canRollback = d.status === 'verified' && d.previousCandidateId;
+      let action = '';
+      if (d.status === 'unknown' || d.status === 'published_unverified') {
+        action = '<div class="event-sub">结果未经确认，不能自动回滚。请先核验运行状态；系统不会在不确定的状态下改写运行配置。</div>';
+      } else if (d.status === 'verified' && !d.previousCandidateId) {
+        action = '<div class="event-sub">这是最初的已核验发布，没有更早的已核验版本可以回退。</div>';
+      } else if (canRollback) {
+        action = `<button class="btn btn-secondary" style="margin-top:7px;padding:5px 8px" data-rollback="${esc(d.id)}">回滚到此版本</button>`;
+      }
+      return `<div class="event"><div class="event-icon" style="background:${meta.tag==='green'?'#e5f8ef':meta.tag==='red'?'#fff0f0':'#eef2ff'};color:${meta.tag==='green'?'#159a72':meta.tag==='red'?'#d14343':'#4169e1'}">${meta.icon}</div>`
+        + `<div class="event-body"><div class="event-title">${esc(d.candidateId)} <span class="tag ${meta.tag}">${esc(meta.label)}</span>${isCurrent?' <span class="tag green">当前生效</span>':''}${d.operation==='rollback'?' <span class="tag blue">rollback</span>':''}</div>`
+        + `<div class="event-sub">${esc(opLabel)} · SHA ${esc(sha)}${sha?'…':''}</div>`
+        + `<div class="event-sub">${esc(d.runtimeMessage || '')}</div>${action}</div>`
+        + `<div class="event-time">${formatDeploymentTime(d.startedAt)}</div></div>`;
+    }).join('');
+    container.querySelectorAll('[data-rollback]').forEach(button => {
+      button.addEventListener('click', () => rollbackDeployment(button.dataset.rollback));
+    });
+  }
+  // loadDeployments is called on demand and after any publish so the panel never shows a
+  // stale record set.
+  window.loadDeployments = async function loadDeployments() {
+    try {
+      const payload = await request(`${API}/deployments?limit=20`);
+      renderDeployments(payload);
+      const notice = $('deploymentHistoryNotice');
+      if (notice && payload.total > payload.items.length) {
+        notice.textContent = `共 ${payload.total} 条发布记录，当前显示最近 ${payload.items.length} 条。`;
+      }
+    } catch (e) {
+      const container = $('deploymentHistory');
+      if (container) container.innerHTML = `<div class="event"><div class="event-body"><div class="event-title">无法读取发布记录</div><div class="event-sub">${esc(e.message)}</div></div></div>`;
+    }
+  };
+  async function rollbackDeployment(deploymentId) {
+    if (!confirm('确认回滚到这个发布？系统会用它记录的上一版已核验候选重新发布，并新增一条发布记录；历史不会被删除。')) return;
+    try {
+      const result = await request(`${API}/deployments/${deploymentId}/rollback`, { method:'POST', body: JSON.stringify({ confirm:true }) });
+      toast(`回滚结果：${result.status}。${result.runtimeMessage || ''}`);
+      await loadDeployments();
+    } catch (e) {
+      toast('回滚未完成：' + e.message + '。请检查发布记录，不要盲目重复操作。');
+      await loadDeployments();
+    }
+  }
+  window.rollback = function(version) { toast('请从下方「版本历史」中选择真实发布记录进行回滚；演示标签不能用于回滚。'); };
   // Subscription refresh is an explicit operation; it updates the current input snapshot but never publishes a candidate.
   document.addEventListener('DOMContentLoaded', () => {
     const addSubButton=document.querySelector('#page-subscriptions .page-head .btn-primary');
@@ -319,5 +399,7 @@ ${result.limitations}`);
     const newRuleButton=document.querySelector('#page-rules .page-head .btn-primary');
     if(newRuleButton) newRuleButton.addEventListener('click',()=>{state.editingRuleId=null;$('newRulePriority').value='100';const title=$('ruleModal').querySelector('h2');if(title)title.textContent='新建流量规则';},true);
     refreshAll();
+    // Load history independently of the rest so a failing list endpoint cannot blank the UI.
+    loadDeployments();
   });
 })();

@@ -169,14 +169,11 @@
         <div style="display:flex;justify-content:flex-end;gap:9px;margin-top:18px"><button class="btn btn-secondary" onclick="toast('候选已作废，草稿未受影响')">作废候选</button><button class="btn btn-primary" onclick="confirmPublish()">确认发布并核验 →</button></div>
       </div>
     </div>
-    <div class="card"><div class="card-head"><div><div class="card-title">版本历史</div><div class="card-desc">生产配置 · 最近发布记录</div></div><button class="btn btn-quiet" onclick="toast('已加载完整版本历史')">查看全部</button></div>
-      <div class="timeline">
-        <div class="event"><div class="event-icon" style="background:#e5f8ef;color:#159a72">✓</div><div class="event-body"><div class="event-title">r024 <span class="tag green">当前生效</span></div><div class="event-sub">优化分流规则与节点筛选</div><div class="event-sub">SHA 7a3f…c91e</div></div><div class="event-time">14:32</div></div>
-        <div class="event"><div class="event-icon">↥</div><div class="event-body"><div class="event-title">r023</div><div class="event-sub">更新主力机场订阅</div><div class="event-sub">SHA 1b82…d012</div><button class="btn btn-secondary" style="margin-top:7px;padding:5px 8px" onclick="rollback('r023')">回滚到此版本</button></div><div class="event-time">10/20</div></div>
-        <div class="event"><div class="event-icon">↥</div><div class="event-body"><div class="event-title">r022</div><div class="event-sub">新增直连规则</div><div class="event-sub">SHA d923…ab47</div><button class="btn btn-secondary" style="margin-top:7px;padding:5px 8px" onclick="rollback('r022')">回滚到此版本</button></div><div class="event-time">10/18</div></div>
-        <div class="event"><div class="event-icon">↶</div><div class="event-body"><div class="event-title">r021 <span class="tag blue">rollback</span></div><div class="event-sub">回滚发布 · 恢复至 r020 内容</div><div class="event-sub">审计链完整保留</div></div><div class="event-time">10/16</div></div>
+    <div class="card"><div class="card-head"><div><div class="card-title">版本历史</div><div class="card-desc">生产配置 · 最近发布记录</div></div><button class="btn btn-quiet" onclick="loadDeployments()">刷新</button></div>
+      <div class="timeline" id="deploymentHistory">
+        <div class="event"><div class="event-body"><div class="event-title">加载中…</div><div class="event-sub">正在读取后端发布记录</div></div></div>
       </div>
-      <div class="notice">回滚会创建一个新的发布版本，不会删除或改写历史记录。若原始产物不可用，系统不会假装回滚成功。</div>
+      <div class="notice" id="deploymentHistoryNotice">回滚会创建一个新的发布记录，不会删除或改写历史。若原始产物不可用，系统不会假装回滚成功。只有状态为「已核验」的发布才能自动回滚。</div>
     </div>
   </div>
 </section>
