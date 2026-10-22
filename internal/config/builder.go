@@ -91,6 +91,7 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 	proxies := make([]map[string]any, 0)
 	fingerprintParts := make([]string, 0, len(subs))
 	sourceSnapshots := make([]sourceSnapshot, 0, len(subs))
+	staleSources := make([]string, 0)
 	for _, sub := range subs {
 		parsed, err := url.ParseRequestURI(sub.URL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -100,43 +101,67 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		if fetch == nil {
 			fetch = fetchSubscription
 		}
-		body, err := fetch(ctx, sub.URL)
-		fetchedAt := time.Now().UTC().Format(time.RFC3339Nano)
-		if err != nil {
-			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "fetch_failed"); statusErr != nil {
+		body, fetchErr := fetch(ctx, sub.URL)
+		attemptedAt := time.Now().UTC().Format(time.RFC3339Nano)
+		var parsedProxies []map[string]any
+		var sourceHash, inputPath string
+		usePrevious := fetchErr != nil
+		if fetchErr != nil {
+			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, attemptedAt, "fetch_failed"); statusErr != nil {
 				return Candidate{}, fmt.Errorf("record fetch failure for subscription %q: %w", sub.Name, statusErr)
 			}
-			return Candidate{}, fmt.Errorf("fetch subscription %q: %w", sub.Name, err)
-		}
-		parsedProxies, err := parseSubscriptionProxies(body)
-		if err != nil {
-			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "parse_failed"); statusErr != nil {
-				return Candidate{}, fmt.Errorf("record parse failure for subscription %q: %w", sub.Name, statusErr)
+		} else {
+			parsedProxies, err = parseSubscriptionProxies(body)
+			if err != nil {
+				fetchErr = err
+				usePrevious = true
+				if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, attemptedAt, "parse_failed"); statusErr != nil {
+					return Candidate{}, fmt.Errorf("record parse failure for subscription %q: %w", sub.Name, statusErr)
+				}
 			}
-			return Candidate{}, fmt.Errorf("subscription %q: %w", sub.Name, err)
+		}
+		if usePrevious {
+			var previousFetchedAt string
+			lookupErr := b.DB.QueryRowContext(ctx, `SELECT content_sha256,snapshot_path,fetched_at FROM subscription_snapshots WHERE subscription_id=? AND is_current=1`, sub.ID).Scan(&sourceHash, &inputPath, &previousFetchedAt)
+			if lookupErr != nil {
+				if errors.Is(lookupErr, sql.ErrNoRows) {
+					return Candidate{}, fmt.Errorf("subscription %q update failed (%v) and no last-known-good snapshot exists; candidate generation is blocked", sub.Name, fetchErr)
+				}
+				return Candidate{}, fmt.Errorf("load previous snapshot for subscription %q: %w", sub.Name, lookupErr)
+			}
+			body, err = os.ReadFile(inputPath)
+			if err != nil {
+				return Candidate{}, fmt.Errorf("read previous snapshot for subscription %q: %w", sub.Name, err)
+			}
+			parsedProxies, err = parseSubscriptionProxies(body)
+			if err != nil {
+				return Candidate{}, fmt.Errorf("previous snapshot for subscription %q is no longer usable: %w", sub.Name, err)
+			}
+			staleSources = append(staleSources, fmt.Sprintf("%s is using its last successful snapshot from %s after update failure (%v)", sub.Name, previousFetchedAt, fetchErr))
+		} else {
+			sourceDigest := sha256.Sum256(body)
+			sourceHash = hex.EncodeToString(sourceDigest[:])
+			inputPath = filepath.Join(b.SnapshotDir, "inputs", sub.ID, sourceHash+".yaml")
+			if err := writeImmutable(inputPath, body); err != nil {
+				if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, attemptedAt, "snapshot_failed"); statusErr != nil {
+					return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
+				}
+				return Candidate{}, fmt.Errorf("persist subscription input snapshot %q: %w", sub.Name, err)
+			}
+			if err := b.recordCurrentSnapshot(ctx, sub.ID, sourceHash, inputPath, attemptedAt, len(parsedProxies)); err != nil {
+				if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, attemptedAt, "snapshot_failed"); statusErr != nil {
+					return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
+				}
+				return Candidate{}, fmt.Errorf("record current snapshot for subscription %q: %w", sub.Name, err)
+			}
+			if err := b.setSubscriptionFetchStatus(ctx, sub.ID, attemptedAt, "fetched"); err != nil {
+				return Candidate{}, fmt.Errorf("record successful fetch for subscription %q: %w", sub.Name, err)
+			}
 		}
 		for _, p := range parsedProxies {
 			name, _ := p["name"].(string)
 			p["name"] = sub.Name + " / " + name
 			proxies = append(proxies, p)
-		}
-		sourceDigest := sha256.Sum256(body)
-		sourceHash := hex.EncodeToString(sourceDigest[:])
-		inputPath := filepath.Join(b.SnapshotDir, "inputs", sub.ID, sourceHash+".yaml")
-		if err := writeImmutable(inputPath, body); err != nil {
-			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "snapshot_failed"); statusErr != nil {
-				return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
-			}
-			return Candidate{}, fmt.Errorf("persist subscription input snapshot %q: %w", sub.Name, err)
-		}
-		if err := b.recordCurrentSnapshot(ctx, sub.ID, sourceHash, inputPath, fetchedAt, len(parsedProxies)); err != nil {
-			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "snapshot_failed"); statusErr != nil {
-				return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
-			}
-			return Candidate{}, fmt.Errorf("record current snapshot for subscription %q: %w", sub.Name, err)
-		}
-		if err := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "fetched"); err != nil {
-			return Candidate{}, fmt.Errorf("record successful fetch for subscription %q: %w", sub.Name, err)
 		}
 		sourceSnapshots = append(sourceSnapshots, sourceSnapshot{SubscriptionID: sub.ID, SHA256: sourceHash, Path: inputPath})
 		fingerprintParts = append(fingerprintParts, sub.ID+":"+sourceHash)
@@ -446,6 +471,9 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 			c.Status = "validated"
 			c.ValidationMessage = "Mihomo binary validation succeeded; proxy references and rule targets were also checked."
 		}
+	}
+	if len(staleSources) > 0 {
+		c.ValidationMessage += " Partial subscription refresh: " + strings.Join(staleSources, "; ") + ". This candidate requires normal validation and publish approval."
 	}
 	if len(terminalWarnings) > 0 {
 		c.ValidationMessage += " Warnings: " + strings.Join(terminalWarnings, " ")
