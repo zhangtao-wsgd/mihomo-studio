@@ -754,3 +754,55 @@ content through PowerShell text cmdlets.
 
 - Subscription-supplied rule import is still not implemented, and the UI says so.
 - CSRF tokens, per-user accounts, and TLS remain outstanding.
+
+## UI honesty audit increment
+
+After the previous increments the pages read real data, but the served template still carried
+fabricated rows and out-of-date claims. Those are gone.
+
+### Removed fabricated content
+
+| Location | What it claimed | Now |
+|---|---|---|
+| Sidebar runtime card | "Mihomo 在线 · v1.19.12 · 运行 12 天 4 小时" and "演示数据 · 未连接真实 Mihomo" | Reads the same runtime status as the dashboard: not configured, unreachable, or connected with the real version. The dot colour follows it |
+| Terminals table | Four invented devices (MacBook Pro, iPhone, iPad, Windows PC) with made-up IPs | Placeholder row until real data arrives |
+| Groups list | Six invented groups with counts such as "128 个节点" | Placeholder row until real data arrives |
+| Group editor node table | Six invented nodes with fake latencies and `node_01a8`-style IDs | Placeholder row; real snapshot nodes replace it |
+| Node matrix table and card title | Six invented nodes and "共 132 条" | Placeholder row and "读取中" |
+| Nodes stat cards | `132`, `0`, `0`, `132` | Em-dashes until computed |
+| Rules list | Six invented rules with `原型演示` buttons | Placeholder row; real rules replace it |
+
+Leaving those rows in the template meant a brief flash of fake data on every load, and, if an
+API call failed, fake rows that persisted indefinitely. Both are now impossible.
+
+### Corrected claims
+
+- The group editor said "下面的节点行仍是原型示例" when the rows come from saved snapshots.
+  It now states the real source and that region is inferred while latency and status come
+  only from controller probes.
+- The fallback-group notice said it was a prototype demo that did not reflect real node data.
+  It now explains the actual ordering and failover semantics.
+- The terminal editor said the product "不具备真实终端识别或路由能力". Source-IP and CIDR
+  identities really do generate `SRC-IP-CIDR` rules; only MAC and manual identities are
+  inventory-only. The notice now says exactly that, and the save button no longer claims the
+  edit only enters a draft when it writes to the backend.
+- The settings subtitle referred to reviewing "原型" when it describes engineering standards.
+
+### Audit method
+
+A small script extracts each page's visible text and flags prototype wording, hard-coded
+versions, invented release labels, sample snapshot ids, sample config paths, and bare numeric
+`stat-value` literals. It reports `no suspicious claims found` on every page except the rules
+page, where the remaining "尚未实现" is the accurate statement about subscription rule import.
+
+### Verified on the deployed stack
+
+- The served template contains zero occurrences of `MacBook Pro`, `node_01a8`, `IEPL 01`,
+  `sub-snap-2026`, `mihomo-primary`, `node_0320`, `Mihomo 在线`, `v1.19.12`, and
+  `未连接真实 Mihomo`.
+- Five "正在读取" placeholders remain, which is the intended pre-load state.
+- `/rules/conflicts` and `/overview` respond normally; health reports 95 with `attention` and
+  a single `probe_coverage` warning against the live `v1.19.32` controller.
+
+`go test ./...`: 94 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green, all
+shell scripts pass `bash -n`.

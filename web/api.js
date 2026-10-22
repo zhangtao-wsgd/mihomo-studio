@@ -235,6 +235,8 @@
   function renderGroups() {
     const container = document.querySelector('#page-groups .card'); if (!container) return;
     const oldRows = [...container.querySelectorAll('.group-row:not(.header)')]; oldRows.forEach(r=>r.remove());
+    // The initial placeholder is not a group row, so remove it explicitly once real data is in.
+    const placeholder = $('groupListPlaceholder'); if (placeholder) placeholder.remove();
     const header = container.querySelector('.group-row.header');
     const rows = state.groups.map(g => {
       const memberCount = Math.max((g.memberNodeNames || []).length,(g.memberNodeIds || []).length);
@@ -591,6 +593,20 @@ ${result.limitations}`);
       tag.textContent = !rt.configured ? '未配置控制器' : (online ? '运行时已连接' : '运行时未知');
       tag.className = 'tag ' + (online ? 'green' : 'amber');
       tag.title = rt.error || '';
+    }
+    // The sidebar previously claimed "Mihomo online · v1.19.12" unconditionally. It now
+    // reflects the same runtime fact as the dashboard, including the unknown case.
+    const sideText = $('sideRuntime');
+    const sideDetail = $('sideRuntimeDetail');
+    const sideDot = $('sideDot');
+    if (sideText && sideDetail) {
+      const rt = data.runtime || {};
+      const online = rt.configured && rt.reachable;
+      sideText.textContent = !rt.configured ? '未配置' : (online ? '已连接' : '无法连接');
+      sideDetail.textContent = !rt.configured
+        ? '未设置控制器地址'
+        : online ? (rt.version || '版本未知') : '控制器未响应，状态未知';
+      if (sideDot) sideDot.style.background = online ? '#23c58e' : '#e5ad45';
     }
 
     const releaseBox = $('overviewRelease');
