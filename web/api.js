@@ -25,7 +25,14 @@
     if (auth.token) headers.set(auth.header, auth.token);
     let response;
     try { response = await fetch(path, {...options, headers, credentials:'same-origin'}); }
-    catch (e) { state.online = false; setConnection(false); throw new Error('无法连接控制平面，请确认服务已启动。'); }
+    catch (e) {
+      // A failed fetch never reaches the server, so reporting "backend not connected" without
+      // the reason hides the real cause: an extension blocking private-IP requests, a dropped
+      // network, or a page served from a different origin. Carry the message through.
+      state.online = false;
+      setConnection(false, describeFetchFailure(e, path));
+      throw new Error('无法连接控制平面：' + describeFetchFailure(e, path));
+    }
     if (response.status === 401) {
       state.online = false;
       // Surface the server's own explanation. It reports whether the header was missing and
@@ -44,6 +51,15 @@
     }
     if (response.status === 204) return null;
     return response.json();
+  }
+  // describeFetchFailure turns an opaque fetch rejection into something actionable. The browser
+  // deliberately hides most detail from script, but the type and message still separate a
+  // blocked request from a server that answered.
+  function describeFetchFailure(error, path) {
+    const name = error && error.name ? error.name : 'Error';
+    const message = error && error.message ? error.message : String(error);
+    const hint = '请求 ' + path + ' 未能送达服务端。可能是浏览器扩展拦截了该地址、网络中断，或页面与接口不同源。';
+    return hint + '（' + name + ': ' + message + '）';
   }
   // Login gate. There is no user or role model by design: one password, the same
   // MIHOMO_SECRET that protects the controller. The gate is a convenience; the server
@@ -91,8 +107,9 @@
       setLogoutVisible(true);
       startConsole();
     } catch (e) {
-      // request() already cleared the token and reopened the gate on 401.
-      if (auth.token) showLoginGate(e.message);
+      // request() already cleared the token and reopened the gate on 401. For any other
+      // failure the gate must show why, otherwise a blocked request looks like a bad password.
+      showLoginGate(e.message);
     } finally {
       if (button) { button.disabled = false; button.textContent = '登录'; }
     }
@@ -120,13 +137,15 @@
           : '';
       }
       return auth.required;
-    } catch (_) {
-      // The status endpoint is public, so a failure here means the server is unreachable;
-      // treat it as "no credential needed" and let the normal connection error surface.
+    } catch (e) {
+      // The status endpoint is public, so failing to read it means the panel cannot reach the
+      // server at all. Returning "no credential needed" here would send the console into a
+      // load that fails for an unexplained reason; report the connection problem instead.
+      auth.statusError = e.message;
       return false;
     }
   }
-  function setConnection(online) {
+  function setConnection(online, reason) {
     state.online = online;
     const pill = document.querySelector('.runtime-pill');
     if (pill) { pill.style.background = online ? '#e9f8f1' : '#fff3e8'; pill.style.color = online ? '#157d5c' : '#9a5b16'; pill.querySelector('span').textContent = online ? '控制平面已连接' : '控制平面未连接'; }
@@ -135,9 +154,13 @@
       badge = document.createElement('div'); badge.id='apiConnectionNotice'; badge.className='notice';
       const notice = $('workspaceNotice'); if (notice) notice.insertAdjacentElement('afterend', badge);
     }
+    // When the cause is known, show it. A bare "not connected" is a guess that hides network,
+    // extension, and same-origin problems behind a message that looks like the server is down.
     badge.innerHTML = online
       ? '<strong>已连接真实后端。</strong>订阅、终端、代理组、规则、节点清单、发布历史与总览统计均来自持久化数据；运行状态来自 Mihomo 控制器实时上报，连不上时会明确显示为未知而不是正常。保存配置不会立即改变运行实例，必须生成候选并完成发布。'
-      : '<strong>后端尚未连接。</strong>当前无法读取或保存配置。为避免误导，写入操作会提示失败，不会将模拟数据报告为已保存。';
+      : '<strong>无法连接控制平面' + (reason ? '' : '。') + '</strong>'
+        + (reason ? '<br>' + esc(reason) : '当前无法读取或保存配置。为避免误导，写入操作会提示失败，不会将模拟数据报告为已保存。')
+        + '<br><span class="muted tiny">排查方向：服务是否在本机可访问、浏览器扩展是否拦截了该地址、页面与接口是否同源。</span>';
     badge.style.borderColor = online ? '#bdebd7' : '#f1d5a8';
     badge.style.background = online ? '#f0fbf6' : '#fff8ec';
   }
@@ -363,7 +386,7 @@
       state.subscriptions=subscriptions; state.terminals=terminals; state.groups=groups; state.rules=rules; state.nodes=nodes;
       renderGroups(); renderTerminals(); renderRules(); renderSubscriptions(); renderNodes(); renderGroupNodeChoices(state.editingGroupId ? (groupByID(state.editingGroupId)?.memberNodeIds||[]) : []);
       return true;
-    } catch (e) { setConnection(false); toast(e.message); return false; }
+    } catch (e) { setConnection(false, e.message); toast(e.message); return false; }
   }
   async function runAction(action, successMessage) {
     try { await action(); await refreshAll(); toast(successMessage); return true; }
@@ -897,6 +920,13 @@ ${result.limitations}`);
     // Decide whether to show the gate before any protected request runs. An unauthenticated
     // panel must never flash stale or empty console chrome first.
     loadAuthStatus().then(async required => {
+      // A failed status read means the panel never reached the server. Show that instead of
+      // loading the console, which would only produce a second, vaguer failure.
+      if (auth.statusError) {
+        setConnection(false, auth.statusError);
+        showLoginGate(auth.statusError);
+        return;
+      }
       if (!required) { startConsole(); return; }
       setLogoutVisible(true);
       if (!auth.token) { showLoginGate(); return; }

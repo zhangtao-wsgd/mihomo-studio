@@ -62,6 +62,11 @@ func (s *Server) Handler() http.Handler {
 	servePrototype := func(w http.ResponseWriter, r *http.Request) {
 		serveStatic(w, r, "prototype-v6.html")
 	}
+	// Every browser asks for a favicon. Answering 204 keeps a missing file out of the request
+	// log instead of reporting a 404 on each load.
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("GET /{$}", servePrototype)
 	mux.HandleFunc("GET /prototype-v6.html", servePrototype)
 	mux.HandleFunc("GET /api.js", func(w http.ResponseWriter, r *http.Request) {

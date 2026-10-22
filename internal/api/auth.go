@@ -112,9 +112,13 @@ func requireAuth(config AuthConfig, logger *slog.Logger, next http.Handler) http
 }
 
 // isUnauthenticatedPath lists the only resources reachable without a credential.
+//
+// These carry no desired state: the browser must load the shell and its script in order to
+// present the login form at all, and the container health check must keep working. The favicon
+// is included because a 401 on every page load only adds noise to the audit log.
 func isUnauthenticatedPath(path string) bool {
 	switch path {
-	case "/healthz", "/api.js", "/", "/prototype-v6.html", "/api/v1/auth/status":
+	case "/healthz", "/api.js", "/", "/prototype-v6.html", "/favicon.ico", "/api/v1/auth/status":
 		return true
 	}
 	return false
