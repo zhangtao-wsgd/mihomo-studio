@@ -28,15 +28,15 @@ jobs:
       - name: Run verification suite
         run: bash scripts/verify.sh
 
-      - name: Validate Compose model
-        run: docker compose config --quiet
-
       - name: Prepare isolated smoke-test environment
         run: |
           cp .env.example .env
           SECRET="$(openssl rand -hex 32)"
           sed -i "s/^MIHOMO_SECRET=.*/MIHOMO_SECRET=${SECRET}/" .env
           echo "MIHOMO_BIND_IP=127.0.0.1" >> .env
+
+      - name: Validate Compose model
+        run: docker compose config --quiet
 
       - name: Build and smoke-test Compose stack
         run: bash scripts/docker-smoke.sh
