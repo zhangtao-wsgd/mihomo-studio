@@ -26,6 +26,7 @@ import (
 )
 
 type Builder struct {
+	fetch            func(context.Context, string) ([]byte, error)
 	DB               *sql.DB
 	SnapshotDir      string
 	ControllerSecret string
@@ -95,7 +96,11 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return Candidate{}, fmt.Errorf("subscription %q has an invalid HTTP(S) URL", sub.Name)
 		}
-		body, err := fetchSubscription(ctx, sub.URL)
+		fetch := b.fetch
+		if fetch == nil {
+			fetch = fetchSubscription
+		}
+		body, err := fetch(ctx, sub.URL)
 		fetchedAt := time.Now().UTC().Format(time.RFC3339Nano)
 		if err != nil {
 			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "fetch_failed"); statusErr != nil {
