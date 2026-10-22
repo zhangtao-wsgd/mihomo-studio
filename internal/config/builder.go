@@ -133,6 +133,10 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 			if err != nil {
 				return Candidate{}, fmt.Errorf("read previous snapshot for subscription %q: %w", sub.Name, err)
 			}
+			previousDigest := sha256.Sum256(body)
+			if hex.EncodeToString(previousDigest[:]) != sourceHash {
+				return Candidate{}, fmt.Errorf("previous snapshot for subscription %q failed SHA-256 integrity verification", sub.Name)
+			}
 			parsedProxies, err = parseSubscriptionProxies(body)
 			if err != nil {
 				return Candidate{}, fmt.Errorf("previous snapshot for subscription %q is no longer usable: %w", sub.Name, err)
