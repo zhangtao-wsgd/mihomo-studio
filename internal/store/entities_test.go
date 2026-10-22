@@ -60,3 +60,16 @@ func TestSaveSubscriptionEditPreservesFetchState(t *testing.T) {
 		t.Errorf("last fetch time = %v, want %v", got.LastFetchAt, lastFetch)
 	}
 }
+func TestNewSubscriptionStartsWithoutFetchHistory(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(filepath.Join(t.TempDir(), "studio.db"))
+	if err != nil { t.Fatalf("open store: %v", err) }
+	defer s.DB.Close()
+	x := domain.Subscription{ID: "fresh", Name: "Fresh", URL: "https://example.com/fresh", Enabled: true}
+	if err := s.SaveSubscription(ctx, x); err != nil { t.Fatalf("save subscription: %v", err) }
+	items, err := s.ListSubscriptions(ctx)
+	if err != nil { t.Fatalf("list subscriptions: %v", err) }
+	if len(items) != 1 { t.Fatalf("got %d subscriptions, want 1", len(items)) }
+	if items[0].LastStatus != "never_fetched" { t.Errorf("last status = %q, want never_fetched", items[0].LastStatus) }
+	if items[0].LastFetchAt != nil { t.Errorf("last fetch time = %v, want nil", items[0].LastFetchAt) }
+}
