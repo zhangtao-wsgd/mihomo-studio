@@ -1,0 +1,41 @@
+# Podman overlay for rootless operation on a single-host VM.
+#
+# Purpose: adapt the stack to two constraints that the base compose.yaml assumes
+# away — an unreachable Docker Hub, and a rootless user namespace.
+#
+# Usage:
+#   podman compose -f compose.yaml -f compose.podman.yaml up -d
+#
+# Everything here is additive: compose.yaml itself stays the canonical definition
+# for Docker/CI, so behavior there is unchanged.
+#
+# Why each override exists:
+#
+# * build.args — Docker Hub is unreachable in this environment, so every base
+#   image is redirected at a reachable mirror. The pinned Mihomo image keeps its
+#   digest-equivalent tag: validation runs the same binary that serves traffic.
+# * user "0:0" on the Studio service — the image declares USER app (uid 100).
+#   Under rootless Podman, container uid 100 maps to a high host subuid (100099
+#   in practice), and the shared named volume ends up owned by that unmapped id.
+#   Running the Studio as container root maps it to the invoking host user, which
+#   keeps the named volumes host-inspectable. Mihomo itself still reads the shared
+#   runtime volume as root, so cross-container access is unaffected.
+# * ports — rootless Podman cannot bind privileged ports, but 80/443 are not used;
+#   the defaults are preserved. The proxy listener is published on the VM's LAN
+#   address so terminal devices can reach it, which is a deliberate configuration
+#   decision recorded in the deployment notes rather than an accidental exposure.
+
+services:
+  mihomo-bootstrap:
+    image: ${ALPINE_IMAGE:-docker.1panel.live/library/alpine:3.21}
+
+  mihomo-studio:
+    build:
+      args:
+        MIHOMO_IMAGE: ${MIHOMO_IMAGE:-docker.io/metacubex/mihomo:v1.19.32}
+        GO_IMAGE: ${GO_IMAGE:-docker.1panel.live/library/golang:1.23-alpine}
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-docker.1panel.live/library/alpine:3.21}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+
+  mihomo:
+    image: ${MIHOMO_IMAGE:-docker.io/metacubex/mihomo:v1.19.32}

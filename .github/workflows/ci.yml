@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run verification suite
+        run: bash scripts/verify.sh
+
+      - name: Validate Compose model
+        run: docker compose config --quiet
+
+      - name: Prepare isolated smoke-test environment
+        run: |
+          cp .env.example .env
+          SECRET="$(openssl rand -hex 32)"
+          sed -i "s/^MIHOMO_SECRET=.*/MIHOMO_SECRET=${SECRET}/" .env
+          echo "MIHOMO_BIND_IP=127.0.0.1" >> .env
+
+      - name: Build and smoke-test Compose stack
+        run: bash scripts/docker-smoke.sh

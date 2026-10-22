@@ -1,0 +1,92 @@
+services:
+  mihomo-bootstrap:
+    image: alpine:3.21
+    restart: "no"
+    user: "0:0"
+    environment:
+      MIHOMO_SECRET: ${MIHOMO_SECRET:?Set MIHOMO_SECRET in .env}
+    volumes:
+      - mihomo-runtime:/runtime
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /runtime/active
+        if [ ! -s /runtime/active/config.yaml ]; then
+          umask 027
+          printf 'mixed-port: 7890\nallow-lan: true\nbind-address: "*"\nmode: rule\nlog-level: info\nexternal-controller: 0.0.0.0:9090\nexternal-controller-cors:\n  allow-origins:\n    - http://127.0.0.1:8081\n    - http://localhost:8081\n  allow-private-network: false\nsecret: "%s"\nproxies: []\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n' "$$MIHOMO_SECRET" > /runtime/active/config.yaml
+        fi
+        chown -R 100:100 /runtime
+
+  mihomo-studio:
+    build:
+      context: .
+      args:
+        MIHOMO_IMAGE: ${MIHOMO_IMAGE:-metacubex/mihomo:v1.19.32}
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: ":8080"
+      DATABASE_PATH: /data/mihomo-studio.db
+      SNAPSHOT_DIR: /data/snapshots
+      ACTIVE_CONFIG_PATH: /runtime/active/config.yaml
+      MIHOMO_CONTROLLER_URL: http://mihomo:9090
+      MIHOMO_SECRET: ${MIHOMO_SECRET:?Set MIHOMO_SECRET in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - app-data:/data
+      - mihomo-runtime:/runtime
+    depends_on:
+      mihomo-bootstrap:
+        condition: service_completed_successfully
+      mihomo:
+        condition: service_started
+    networks: [control]
+
+  metacubexd:
+    image: ghcr.io/metacubex/metacubexd:v1.273.1@sha256:99b3a077be98b5a8db756f05b561e28072147cd9e6651dd521150046b57fd9d0
+    profiles: [diagnostics]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:80"
+    depends_on:
+      mihomo:
+        condition: service_started
+    networks: [control]
+
+  mihomo:
+    image: ${MIHOMO_IMAGE:-metacubex/mihomo:v1.19.32}
+    restart: unless-stopped
+    command: ["-d", "/root/.config/mihomo", "-f", "/runtime/active/config.yaml"]
+    environment:
+      SAFE_PATHS: /runtime/active:/data/snapshots
+    ports:
+      - "${MIHOMO_BIND_IP:-127.0.0.1}:7890:7890"
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "/mihomo", "-v"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    volumes:
+      - mihomo-runtime:/runtime
+      - mihomo-state:/root/.config/mihomo
+    depends_on:
+      mihomo-bootstrap:
+        condition: service_completed_successfully
+    networks: [control]
+
+volumes:
+  app-data:
+  mihomo-runtime:
+  mihomo-state:
+
+networks:
+  control:
+    internal: false

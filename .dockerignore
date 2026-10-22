@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+data/
+backups/
+coverage.out
+coverage.html
+mihomo-studio
+mihomo-studio.exe
