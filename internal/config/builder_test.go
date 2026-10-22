@@ -140,8 +140,12 @@ func TestBuildFailurePreservesCurrentSubscriptionSnapshot(t *testing.T) {
 				return tc.fetchBody, tc.fetchErr
 			}
 
-			if _, err := builder.Build(ctx); err == nil {
-				t.Fatal("Build succeeded; expected subscription refresh failure")
+			candidate, buildErr := builder.Build(ctx)
+			if buildErr != nil {
+				t.Fatalf("Build should reuse the last-known-good snapshot after refresh failure: %v", buildErr)
+			}
+			if !strings.Contains(candidate.ValidationMessage, "Partial subscription refresh") {
+				t.Fatalf("candidate should clearly disclose stale source reuse, got %q", candidate.ValidationMessage)
 			}
 
 			var currentHash, currentPath string
@@ -159,6 +163,13 @@ func TestBuildFailurePreservesCurrentSubscriptionSnapshot(t *testing.T) {
 			}
 			if gotStatus != tc.wantStatus {
 				t.Errorf("last status = %q, want %q", gotStatus, tc.wantStatus)
+			}
+			var candidateInputs int
+			if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM config_candidate_inputs WHERE candidate_id=? AND subscription_id=? AND content_sha256=?`, candidate.ID, sub.ID, oldHash).Scan(&candidateInputs); err != nil {
+				t.Fatalf("read candidate input manifest: %v", err)
+			}
+			if candidateInputs != 1 {
+				t.Errorf("candidate input manifest should reference previous snapshot, count=%d", candidateInputs)
 			}
 		})
 	}
