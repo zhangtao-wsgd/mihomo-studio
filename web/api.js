@@ -903,21 +903,53 @@ ${result.limitations}`);
       panel.textContent = '读取操作事件失败：' + error.message;
     }
   }
-  // loadDeployments is called on demand and after any publish so the panel never shows a
-  // stale record set.
-  window.loadDeployments = async function loadDeployments() {
+  // Keep pagination state explicit so large histories remain bounded and navigable.
+  const deploymentPageSize = 20;
+  let deploymentOffset = 0;
+  function renderDeploymentPagination(payload) {
+    const total = Number(payload.total) || 0;
+    const limit = Number(payload.limit) || deploymentPageSize;
+    const offset = Number(payload.offset) || 0;
+    const pageInfo = $('deploymentPageInfo');
+    const previous = $('deploymentPrevPage');
+    const next = $('deploymentNextPage');
+    if (pageInfo) pageInfo.textContent = total === 0 ? '共 0 条发布记录' : `显示第 ${offset + 1}–${Math.min(offset + (payload.items || []).length, total)} 条，共 ${total} 条`;
+    if (previous) previous.disabled = offset <= 0;
+    if (next) next.disabled = offset + limit >= total;
+    const notice = $('deploymentHistoryNotice');
+    if (notice) notice.textContent = '回滚会创建新的发布记录，不会删除历史。未知或未经核验的结果不会提供自动回滚。';
+  }
+  window.loadDeployments = async function loadDeployments(options = {}) {
+    if (options.reset) deploymentOffset = 0;
     try {
-      const payload = await request(`${API}/deployments?limit=20`);
-      renderDeployments(payload);
-      const notice = $('deploymentHistoryNotice');
-      if (notice && payload.total > payload.items.length) {
-        notice.textContent = `共 ${payload.total} 条发布记录，当前显示最近 ${payload.items.length} 条。`;
+      let payload = await request(`${API}/deployments?limit=${deploymentPageSize}&offset=${deploymentOffset}`);
+      // If history shrank while this page was open, move to the last valid page instead
+      // of leaving the operator with an empty page and a misleading count.
+      if (deploymentOffset > 0 && payload.total <= deploymentOffset) {
+        deploymentOffset = Math.max(0, Math.floor(Math.max(0, payload.total - 1) / deploymentPageSize) * deploymentPageSize);
+        payload = await request(`${API}/deployments?limit=${deploymentPageSize}&offset=${deploymentOffset}`);
       }
+      renderDeployments(payload);
+      renderDeploymentPagination(payload);
     } catch (e) {
       const container = $('deploymentHistory');
       if (container) container.innerHTML = `<div class="event"><div class="event-body"><div class="event-title">无法读取发布记录</div><div class="event-sub">${esc(e.message)}</div></div></div>`;
+      const pageInfo = $('deploymentPageInfo');
+      if (pageInfo) pageInfo.textContent = '分页状态不可用，请刷新重试。';
     }
   };
+  document.addEventListener('DOMContentLoaded', () => {
+    const previous = $('deploymentPrevPage');
+    const next = $('deploymentNextPage');
+    if (previous) previous.addEventListener('click', () => {
+      deploymentOffset = Math.max(0, deploymentOffset - deploymentPageSize);
+      loadDeployments();
+    });
+    if (next) next.addEventListener('click', () => {
+      deploymentOffset += deploymentPageSize;
+      loadDeployments();
+    });
+  });
   async function rollbackDeployment(deploymentId) {
     if (!confirm('确认回滚到这个发布？系统会用它记录的上一版已核验候选重新发布，并新增一条发布记录；历史不会被删除。')) return;
     try {
