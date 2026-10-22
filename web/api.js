@@ -981,10 +981,10 @@ ${result.limitations}`);
     try {
       const result = await request(`${API}/deployments/${deploymentId}/rollback`, { method:'POST', body: JSON.stringify({ confirm:true }) });
       toast(`回滚结果：${result.status}。${result.runtimeMessage || ''}`);
-      await loadDeployments();
+      await loadDeployments({ reset: true });
     } catch (e) {
       toast('回滚未完成：' + e.message + '。请检查发布记录，不要盲目重复操作。');
-      await loadDeployments();
+      await loadDeployments({ reset: true });
     }
   }
   window.rollback = function(version) { toast('请从下方「版本历史」中选择真实发布记录进行回滚；演示标签不能用于回滚。'); };
