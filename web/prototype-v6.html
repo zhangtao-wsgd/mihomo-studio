@@ -168,6 +168,13 @@
       <div class="timeline" id="deploymentHistory">
         <div class="event"><div class="event-body"><div class="event-title">加载中…</div><div class="event-sub">正在读取后端发布记录</div></div></div>
       </div>
+      <div class="row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px">
+        <span class="event-sub" id="deploymentPageInfo">发布记录分页加载中…</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-quiet" id="deploymentPrevPage" type="button" disabled>上一页</button>
+          <button class="btn btn-quiet" id="deploymentNextPage" type="button" disabled>下一页</button>
+        </div>
+      </div>
       <div class="notice" id="deploymentHistoryNotice">回滚会创建一个新的发布记录，不会删除或改写历史。若原始产物不可用，系统不会假装回滚成功。只有状态为「已核验」的发布才能自动回滚。</div>
     </div>
   </div>
