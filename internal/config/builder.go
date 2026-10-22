@@ -97,18 +97,17 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		}
 		body, err := fetchSubscription(ctx, sub.URL)
 		fetchedAt := time.Now().UTC().Format(time.RFC3339Nano)
-		status := "fetched"
 		if err != nil {
-			status = "fetch_failed"
-		}
-		if _, statusErr := b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status=?,updated_at=? WHERE id=?`, fetchedAt, status, fetchedAt, sub.ID); statusErr != nil {
-			return Candidate{}, fmt.Errorf("record fetch status for subscription %q: %w", sub.Name, statusErr)
-		}
-		if err != nil {
+			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "fetch_failed"); statusErr != nil {
+				return Candidate{}, fmt.Errorf("record fetch failure for subscription %q: %w", sub.Name, statusErr)
+			}
 			return Candidate{}, fmt.Errorf("fetch subscription %q: %w", sub.Name, err)
 		}
 		parsedProxies, err := parseSubscriptionProxies(body)
 		if err != nil {
+			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "parse_failed"); statusErr != nil {
+				return Candidate{}, fmt.Errorf("record parse failure for subscription %q: %w", sub.Name, statusErr)
+			}
 			return Candidate{}, fmt.Errorf("subscription %q: %w", sub.Name, err)
 		}
 		for _, p := range parsedProxies {
@@ -120,10 +119,19 @@ func (b *Builder) Build(ctx context.Context) (Candidate, error) {
 		sourceHash := hex.EncodeToString(sourceDigest[:])
 		inputPath := filepath.Join(b.SnapshotDir, "inputs", sub.ID, sourceHash+".yaml")
 		if err := writeImmutable(inputPath, body); err != nil {
+			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "snapshot_failed"); statusErr != nil {
+				return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
+			}
 			return Candidate{}, fmt.Errorf("persist subscription input snapshot %q: %w", sub.Name, err)
 		}
 		if err := b.recordCurrentSnapshot(ctx, sub.ID, sourceHash, inputPath, fetchedAt, len(parsedProxies)); err != nil {
+			if statusErr := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "snapshot_failed"); statusErr != nil {
+				return Candidate{}, fmt.Errorf("record snapshot failure for subscription %q: %w", sub.Name, statusErr)
+			}
 			return Candidate{}, fmt.Errorf("record current snapshot for subscription %q: %w", sub.Name, err)
+		}
+		if err := b.setSubscriptionFetchStatus(ctx, sub.ID, fetchedAt, "fetched"); err != nil {
+			return Candidate{}, fmt.Errorf("record successful fetch for subscription %q: %w", sub.Name, err)
 		}
 		sourceSnapshots = append(sourceSnapshots, sourceSnapshot{SubscriptionID: sub.ID, SHA256: sourceHash, Path: inputPath})
 		fingerprintParts = append(fingerprintParts, sub.ID+":"+sourceHash)
@@ -564,6 +572,11 @@ func (b *Builder) RefreshSubscription(ctx context.Context, subscriptionID string
 		return nil, err
 	}
 	return map[string]any{"subscriptionId": subscriptionID, "subscription": name, "sha256": hash, "fetchedAt": fetchedAt, "proxyCount": len(proxies), "snapshotPath": path, "status": "current"}, nil
+}
+
+func (b *Builder) setSubscriptionFetchStatus(ctx context.Context, subscriptionID, fetchedAt, status string) error {
+	_, err := b.DB.ExecContext(ctx, `UPDATE subscriptions SET last_fetch_at=?,last_status=?,updated_at=? WHERE id=?`, fetchedAt, status, fetchedAt, subscriptionID)
+	return err
 }
 
 func (b *Builder) recordCurrentSnapshot(ctx context.Context, subscriptionID, hash, path, fetchedAt string, proxyCount int) error {
