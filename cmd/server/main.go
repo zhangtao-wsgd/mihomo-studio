@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,10 +25,25 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.DB.Close()
-	secret := os.Getenv("MIHOMO_SECRET")
-	if secret == "" {
-		secret = "local-development-only-change-me"
-		logger.Warn("using development Mihomo secret; set MIHOMO_SECRET before sharing this host")
+	listenAddr := envOr("LISTEN_ADDR", ":8080")
+	secret := strings.TrimSpace(os.Getenv("MIHOMO_SECRET"))
+	// Without a secret there is nothing to protect the controller with, and the panel has
+	// no credential either. Only a loopback listener may continue in that state; a listener
+	// reachable from the network must be configured. There is deliberately no built-in
+	// fallback value: a hard-coded default would be public knowledge and would look like
+	// protection while providing none.
+	allowUnauthenticated := secret == ""
+	if allowUnauthenticated {
+		if !api.IsLoopbackListener(listenAddr) {
+			logger.Error("MIHOMO_SECRET is required when the listener is reachable from the network",
+				"listenAddr", listenAddr,
+				"hint", "set MIHOMO_SECRET, or bind LISTEN_ADDR to 127.0.0.1")
+			os.Exit(1)
+		}
+		logger.Warn("MIHOMO_SECRET is not set; running unauthenticated because the listener is loopback-only",
+			"listenAddr", listenAddr)
+	} else {
+		logger.Info("panel and Mihomo controller share MIHOMO_SECRET; requests must send the admin token header")
 	}
 	snapshotDir := os.Getenv("SNAPSHOT_DIR")
 	if snapshotDir == "" {
@@ -44,7 +60,7 @@ func main() {
 		runtime = &workflow.HTTPRuntime{BaseURL: controller, Secret: secret}
 	}
 	flow := &workflow.Service{DB: db.DB, Builder: builder, Runtime: runtime, ActivePath: activePath}
-	server := &http.Server{Addr: envOr("LISTEN_ADDR", ":8080"), Handler: (&api.Server{Store: db, Workflow: flow, Logger: logger}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: listenAddr, Handler: (&api.Server{Store: db, Workflow: flow, Logger: logger, Auth: api.AuthConfig{Token: secret, AllowUnauthenticated: allowUnauthenticated}}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

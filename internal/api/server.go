@@ -25,6 +25,7 @@ type Server struct {
 	Store    *store.Store
 	Workflow *workflow.Service
 	Logger   *slog.Logger
+	Auth     AuthConfig
 }
 
 func (s *Server) Handler() http.Handler {
@@ -34,6 +35,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", servePrototype)
 	mux.HandleFunc("GET /prototype-v6.html", servePrototype)
 	mux.HandleFunc("GET /api.js", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "web/api.js") })
+	// Reports whether the panel currently requires a credential, so the client can tell
+	// "wrong secret" apart from "no secret configured" without probing a protected route.
+	mux.HandleFunc("GET /api/v1/auth/status", s.authStatus)
 	mux.HandleFunc("GET /api/v1/subscriptions", s.listSubscriptions)
 	mux.HandleFunc("POST /api/v1/subscriptions", s.saveSubscription)
 	mux.HandleFunc("GET /api/v1/subscriptions/{id}", s.getSubscription)
@@ -66,7 +70,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/deployments/{id}/verify", s.verifyDeployment)
 	mux.HandleFunc("POST /api/v1/deployments/{id}/rollback", s.rollbackDeployment)
 	mux.HandleFunc("GET /api/v1/audit-events", s.listAuditEvents)
-	return requestLog(s.Logger, securityHeaders(sameOrigin(mux)))
+	return requestLog(s.Logger, securityHeaders(requireAuth(s.Auth, sameOrigin(mux))))
+}
+func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{
+		"required": s.Auth.Enabled(),
+		// Stating the header name lets the client set it without hard-coding a constant.
+		"header": adminTokenHeader,
+		"reason": authStatusReason(s.Auth),
+	})
+}
+
+// authStatusReason explains why a credential is or is not required, using the same
+// conditions that produced the decision in main so the two cannot drift apart in wording.
+func authStatusReason(config AuthConfig) string {
+	if config.Enabled() {
+		return "MIHOMO_SECRET is set, so this panel requires the same secret that protects the Mihomo controller."
+	}
+	if config.AllowUnauthenticated {
+		return "No secret is configured and the listener is loopback-only, so requests from this host are not authenticated."
+	}
+	return "No secret is configured; only loopback listeners may run without one."
 }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"status": "ok", "service": "mihomo-studio", "time": time.Now().UTC()})

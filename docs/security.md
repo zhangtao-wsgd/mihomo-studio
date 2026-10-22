@@ -7,27 +7,70 @@ bind address.
 
 | Surface | Default binding | Protection |
 |---|---|---|
-| Studio control API (`8080`) | `127.0.0.1` | **None.** Same-origin check only. No authentication. |
+| Studio control API (`8080`) | `127.0.0.1` | `MIHOMO_SECRET` via `X-Admin-Token`, when set. See below. |
 | Mihomo controller (`9090`) | `127.0.0.1` | `MIHOMO_SECRET` bearer token. |
 | Proxy listener (`7890`) | `127.0.0.1` | None — it is the proxy itself. |
 
-The same-origin check in `internal/api/server.go` rejects requests whose `Origin` header
-names a different host. That is a CSRF-oriented guard for the browser UI. It is **not**
-authentication: any non-browser client that omits `Origin` is served normally.
+### One secret for both surfaces
+
+The panel and the controller share `MIHOMO_SECRET`. That value is what the manager writes
+into the generated `config.yaml` as `secret:`, and it is also what the manager presents
+when it talks to the controller. Reusing it as the panel credential means an operator
+remembers one password, and rotating it in `.env` keeps both sides in step.
+
+Requests present it in the `X-Admin-Token` header. It is **not** accepted in the query
+string: a query parameter would leak into browser history, proxy access logs, and `Referer`
+headers. Comparison uses `crypto/subtle.ConstantTimeCompare`, so repeated wrong guesses
+cannot be distinguished by timing.
+
+The browser stores the token in `sessionStorage`, not `localStorage`, so closing the tab
+forgets it rather than leaving it on disk indefinitely. It never appears in the URL.
+
+### Fail-closed by default
+
+There is no built-in fallback secret. A hard-coded default would be public knowledge and
+would look like protection while providing none.
+
+| Situation | Behaviour |
+|---|---|
+| `MIHOMO_SECRET` set | Every `/api/v1/*` request except `/auth/status` must present the header. |
+| `MIHOMO_SECRET` unset, listener is loopback | Allowed to start unauthenticated, with a startup warning. |
+| `MIHOMO_SECRET` unset, listener is not loopback | **Refuses to start** with an actionable error. |
+
+`0.0.0.0`, `:8080`, and any routable address count as non-loopback. An unparseable
+`LISTEN_ADDR` is also treated as non-loopback, so a typo fails closed rather than quietly
+exposing the panel.
+
+### What stays reachable without a credential
+
+`/healthz`, `/api.js`, `/`, `/prototype-v6.html`, and `/api/v1/auth/status`. These carry no
+desired state: the shell must load so it can prompt for the token, the container health
+check must keep working, and the status endpoint only reports whether a credential is
+required. `authStatus` never echoes the secret.
+
+### What this does not protect against
+
+This is a trusted-LAN access control, not a multi-user authentication system:
+
+- Anyone who learns `MIHOMO_SECRET` has full control of the panel and the controller.
+- There is no user list, no roles, no session expiry, no rate limiting, and no lockout.
+- Rejected requests are not audited; only accepted deployments are.
+- The token travels in plaintext over HTTP. Put the panel behind TLS if the network is not
+  trusted.
+- Compromising the browser's `sessionStorage` grants access until the tab closes.
 
 ## What a LAN binding means
 
 Setting `STUDIO_BIND_IP` or `CONTROLLER_BIND_IP` to a LAN address changes the exposure in a
 way that is easy to underestimate:
 
-- **Studio on the LAN** lets anyone who can reach that port read your configuration, read
+- **Studio on the LAN** lets anyone holding `MIHOMO_SECRET` read your configuration, read
   subscription URLs, create or delete proxy groups, terminals, and rules, build candidates,
   and **publish them to the running Mihomo instance**. Subscription URLs frequently embed
-  access tokens, so this also discloses them.
+  access tokens, so this also discloses them. Without a configured secret the panel refuses
+  to start on a non-loopback listener, so this cannot happen by accident.
 - **Controller on the LAN** lets anyone holding `MIHOMO_SECRET` rewrite live routing
   directly, bypassing candidate validation, confirmation, audit, and rollback.
-- Neither surface rate-limits or logs failed authentication, because there is no
-  authentication to fail.
 
 Reaching these ports requires network access to the host. They are not reachable from the
 public Internet unless the host is separately forwarded or exposed, but they are reachable
@@ -35,8 +78,8 @@ by every device on the same subnet, including guests and internet-of-things devi
 
 ## Deliberate decision on record
 
-An operator may deliberately bind these ports to a specific trusted subnet without adding
-authentication. If you do:
+Binding these ports to a trusted subnet while relying on the shared secret is an accepted
+trade-off for this deployment. If you do:
 
 - Set the bind address to one specific interface address, not `0.0.0.0`. Binding a single
   address fails closed for unexpected interfaces and is easy to audit with `ss -ltn`.
@@ -45,22 +88,20 @@ authentication. If you do:
 - Understand that this is a trust decision about every device on the network, not a
   technical control.
 
-The deployment used during development follows that pattern: bind to the host's single
-LAN address and allow only the LAN CIDR at the firewall.
-
 ## Known gaps, not yet implemented
 
-These are tracked as product work, not as solved problems:
-
-- [ ] Administrator authentication and session handling for the Studio API.
-- [ ] CSRF token issuance and validation for state-changing requests.
+- [ ] Per-user accounts, roles, and session expiry.
+- [ ] CSRF tokens for state-changing requests. The current same-origin check rejects a
+      mismatched `Origin` but permits a request that omits it entirely; the shared-secret
+      header is what actually gates those requests today.
 - [ ] Encryption of subscription URLs at rest; they are currently stored in plaintext in SQLite.
 - [ ] Rate limiting and lockout on the control API.
-- [ ] Audit of rejected requests, not only of accepted deployments.
+- [ ] Auditing of rejected requests, not only of accepted deployments.
+- [ ] TLS termination for the panel.
 
-Until authentication and CSRF protection are complete, treat any non-loopback binding of
-port `8080` as a temporary, trusted-network-only configuration. Do not expose it to the
-Internet under any circumstances.
+Until those exist, treat any non-loopback binding as a trusted-network-only configuration.
+Do not expose it to the Internet under any circumstances. See also the
+[SSRF guard](#ssrf-guard) below.
 
 ## SSRF guard
 

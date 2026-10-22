@@ -20,6 +20,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 SECRET=$(grep '^MIHOMO_SECRET=' "$ENV_FILE" | cut -d= -f2-)
+if [[ -z "${SECRET:-}" ]]; then
+  printf 'MIHOMO_SECRET is empty in %s; the panel would run unauthenticated and these calls would fail with 401\n' "$ENV_FILE" >&2
+  exit 1
+fi
+# The panel and the controller share MIHOMO_SECRET, so every management call must present it.
+AUTH_HEADER=(-H "X-Admin-Token: $SECRET")
 
 section() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 pass()    { printf '  \033[32mPASS\033[0m  %s\n' "$*"; }
@@ -28,7 +34,7 @@ info()    { printf '        %s\n' "$*"; }
 FAILED=0
 
 jq_() { python3 -c "import sys,json;d=json.load(sys.stdin);print(d$1)" 2>/dev/null; }
-api() { curl -s -X "$1" "$S$2" -H 'Content-Type: application/json' ${3:+-d "$3"}; }
+api() { curl -s -X "$1" "$S$2" "${AUTH_HEADER[@]}" -H 'Content-Type: application/json' ${3:+-d "$3"}; }
 
 section "1. Publish a real subscription fixture to a public host"
 FIXTURE=$(cat <<'YAML'
@@ -63,7 +69,7 @@ section "2. Clean slate"
 # while references exist. Rules and terminals must go first.
 del_all() {
   local path="$1" label="$2"
-  curl -s -m 15 "$S$path" | python3 -c "
+  curl -s -m 15 "${AUTH_HEADER[@]}" "$S$path" | python3 -c "
 import sys, json
 for item in json.load(sys.stdin):
     print(item['id'])

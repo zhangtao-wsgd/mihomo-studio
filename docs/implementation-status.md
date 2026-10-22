@@ -340,3 +340,98 @@ subscription:
 - Authentication and CSRF remain unimplemented.
 - The overview dashboard statistics and the settings page are still prototype-only.
 - `audit_events` is now readable but no UI surface consumes `/audit-events` yet.
+
+## Access control increment
+
+The panel previously had no authentication at all. The middleware chain was
+`requestLog → securityHeaders → sameOrigin → mux`, and `sameOrigin` only rejected a
+*mismatched* `Origin` header, so any client that simply omitted `Origin` was served
+normally. Anyone able to reach port `8080` could read configuration, including
+subscription URLs with embedded tokens, and publish to the running instance.
+
+The design follows the sibling `mihomo-manager` project, which uses one secret for both
+the panel credential and the controller: `MIHOMO_SECRET` is written into the generated
+`config.yaml` as `secret:`, presented when the manager calls the controller, and now also
+required by the panel. One password, rotated in one place.
+
+### Deliberate differences from `mihomo-manager`
+
+Its guard was `if token != ""` plus a plaintext `==` against either a header or `?token=`.
+Those choices were not carried over:
+
+| Concern | mihomo-manager | here |
+|---|---|---|
+| Comparison | plaintext `==` | `subtle.ConstantTimeCompare` |
+| Transport | `X-Token` header **or** `?token=` | `X-Admin-Token` header only; query is rejected |
+| Missing config | silently unauthenticated | refused on a non-loopback listener |
+| Fallback value | none | none — the previous hard-coded fallback was removed |
+
+The previously built-in fallback `local-development-only-change-me` was removed. A
+hard-coded default is public knowledge and would look like protection while providing none.
+
+### Behaviour
+
+| Situation | Behaviour |
+|---|---|
+| `MIHOMO_SECRET` set | `/api/v1/*` requires the header; wrong or missing returns `401` with `WWW-Authenticate` |
+| unset, loopback listener | starts unauthenticated with a warning |
+| unset, non-loopback listener | **exits non-zero** with an actionable log line |
+
+`0.0.0.0`, `:8080`, an unparseable address, and any routable address all count as
+non-loopback, so a typo fails closed.
+
+Always-public paths: `/healthz`, `/api.js`, `/`, `/prototype-v6.html`,
+`/api/v1/auth/status`. They carry no desired state; the shell must load so it can prompt,
+and the container health check must keep working.
+
+### Browser behaviour
+
+The token lives in `sessionStorage`, not `localStorage`, so closing the tab forgets it. It
+is sent as a custom header and never placed in the URL. On a `401`, the client prompts once
+with an explanation and retries, instead of failing silently or prompting per request.
+
+### Scripts updated
+
+`scripts/vm-lifecycle.sh` now reads `MIHOMO_SECRET` from the deployment `.env`, refuses to
+run when it is empty, and sends `X-Admin-Token` on every call.
+`scripts/real-subscription-check.sh` accepts an optional `ADMIN_TOKEN` and additionally
+honours `STUDIO_API`, so it works against both an authenticated and a loopback dev server.
+
+### Verification
+
+Unit tests added for: loopback-address detection (including `:8080`, `0.0.0.0`, and
+unparseable input), pass-through when disabled, rejection of missing and wrong tokens,
+acceptance of the correct token, rejection of a query-string token, the always-public path
+set, a route-level sweep asserting `401` on fourteen protected endpoints, and `auth/status`
+neither leaking the secret nor misreporting the requirement.
+
+Exercised against a running binary:
+
+- Loopback with no secret: `/healthz`, `/auth/status`, and `/api/v1/rules` all return `200`.
+- `LISTEN_ADDR=0.0.0.0` with no secret: process exits with code `1` and logs
+  `MIHOMO_SECRET is required when the listener is reachable from the network`.
+- With a secret: static assets and `auth/status` return `200`; `/api/v1/rules`,
+  `/api/v1/nodes`, `/api/v1/deployments`, and `POST /api/v1/rules` return `401` without a
+  token and `200` with the correct one; `?token=<secret>` returns `401`; `auth/status`
+  does not echo the secret.
+- `scripts/real-subscription-check.sh` with the token parsed 45 nodes; without it, it
+  reported `a valid X-Admin-Token header is required`.
+
+`go test ./...`: 53 tests pass. `gofmt` clean, `go vet` clean, `scripts/verify.sh` green.
+
+### Honest limits of this increment
+
+This is trusted-LAN access control, not multi-user authentication:
+
+- No user accounts, roles, session expiry, rate limiting, or lockout.
+- Rejected requests are not audited.
+- The token crosses the network in plaintext over HTTP; TLS is not provided.
+- Anyone who learns `MIHOMO_SECRET` controls both the panel and the controller by design.
+- CSRF tokens are still absent. The shared-secret header is what gates state-changing
+  requests today, which is why the query-string form was rejected.
+
+### Still open after this increment
+
+- CSRF tokens, per-user accounts, and TLS.
+- The overview dashboard statistics and the settings page remain prototype-only.
+- `/audit-events` is readable but no UI surface consumes it yet.

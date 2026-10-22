@@ -8,12 +8,29 @@
   const labelType = (v) => ({'select':'手动选择 select','url-test':'自动测速 url-test','fallback':'故障转移 fallback','load-balance':'负载均衡 load-balance'}[v] || v);
   const identityLabel = (v) => ({source_ip:'源 IP',cidr:'CIDR 网段',mac:'MAC 地址',manual:'手动标识'}[v] || v);
   const ruleLabel = (v) => ({'DOMAIN-SUFFIX':'域名后缀','DOMAIN':'完整域名','DOMAIN-KEYWORD':'域名关键词','IP-CIDR':'IPv4 网段','IP-CIDR6':'IPv6 网段','GEOSITE':'GeoSite 规则集','GEOIP':'GeoIP 规则'}[v] || v);
+  // The panel credential is the same MIHOMO_SECRET that protects the controller, matching
+  // the single-secret model documented in docs/security.md. It is sent as a custom header,
+  // never in the URL, so it does not appear in browser history or access logs. It is kept
+  // in sessionStorage so closing the tab forgets it rather than leaving it on disk.
+  const TOKEN_KEY = 'mihomoStudioAdminToken';
+  const auth = { required: false, header: 'X-Admin-Token', token: '' };
+  try { auth.token = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (_) { auth.token = ''; }
+  function setToken(value) {
+    auth.token = value || '';
+    try { auth.token ? sessionStorage.setItem(TOKEN_KEY, auth.token) : sessionStorage.removeItem(TOKEN_KEY); } catch (_) {}
+  }
   async function request(path, options={}) {
     const headers = new Headers(options.headers || {});
     if (options.body !== undefined) headers.set('Content-Type','application/json');
+    if (auth.token) headers.set(auth.header, auth.token);
     let response;
     try { response = await fetch(path, {...options, headers, credentials:'same-origin'}); }
     catch (e) { state.online = false; setConnection(false); throw new Error('无法连接控制平面，请确认服务已启动。'); }
+    if (response.status === 401) {
+      state.online = false;
+      promptForToken('控制平面要求访问令牌，与 Mihomo 控制器使用同一个 secret。');
+      throw new Error('需要访问令牌才能读取或修改配置。');
+    }
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
       try { const body = await response.json(); detail = body.error || detail; } catch (_) {}
@@ -21,6 +38,33 @@
     }
     if (response.status === 204) return null;
     return response.json();
+  }
+  // Prompt once per page load so a wrong secret does not spawn a prompt per request.
+  let tokenPromptOpen = false;
+  function promptForToken(reason) {
+    if (tokenPromptOpen) return;
+    tokenPromptOpen = true;
+    const entered = window.prompt(reason + '\n\n请输入访问令牌（留空则取消）：', '');
+    tokenPromptOpen = false;
+    if (entered === null) return;
+    if (!entered.trim()) { toast('未提供访问令牌，无法读取配置。'); return; }
+    setToken(entered.trim());
+    refreshAll();
+    loadDeployments();
+  }
+  async function loadAuthStatus() {
+    try {
+      const status = await request('/api/v1/auth/status');
+      auth.required = !!status.required;
+      if (status.header) auth.header = status.header;
+      const badge = $('authNotice');
+      if (badge) {
+        badge.style.display = auth.required ? '' : 'none';
+        badge.innerHTML = auth.required
+          ? `<strong>需要访问令牌。</strong>面板与 Mihomo 控制器共用 MIHOMO_SECRET。请求通过 <code>${esc(auth.header)}</code> 头携带，不会出现在地址栏。`
+          : '';
+      }
+    } catch (_) { /* status is informational; a failure must not block the panel */ }
   }
   function setConnection(online) {
     state.online = online;
@@ -398,8 +442,12 @@ ${result.limitations}`);
     if(addSubButton) addSubButton.addEventListener('click',()=>{state.editingSubscriptionId=null;$('subName').value='';$('subUrl').value='';},true);
     const newRuleButton=document.querySelector('#page-rules .page-head .btn-primary');
     if(newRuleButton) newRuleButton.addEventListener('click',()=>{state.editingRuleId=null;$('newRulePriority').value='100';const title=$('ruleModal').querySelector('h2');if(title)title.textContent='新建流量规则';},true);
-    refreshAll();
-    // Load history independently of the rest so a failing list endpoint cannot blank the UI.
-    loadDeployments();
+    // Discover the credential requirement before the first data load so the operator is
+    // prompted once, with an explanation, instead of seeing a bare 401.
+    loadAuthStatus().then(() => {
+      refreshAll();
+      // Load history independently of the rest so a failing list endpoint cannot blank the UI.
+      loadDeployments();
+    });
   });
 })();

@@ -1,6 +1,29 @@
 ﻿# HTTP API (first implementation slice)
 
-The control API is intended for local use and is bound to `127.0.0.1:8080` by Compose. Do not expose it to a network until authentication and authorization are implemented.
+The control API is bound to `127.0.0.1:8080` by Compose.
+
+## Authentication
+
+When `MIHOMO_SECRET` is set, every `/api/v1/*` request except `/api/v1/auth/status` must
+carry it in the `X-Admin-Token` header:
+
+```sh
+curl -H "X-Admin-Token: $MIHOMO_SECRET" http://127.0.0.1:8080/api/v1/rules
+```
+
+The same value protects the Mihomo controller, so there is one password to manage. It is
+deliberately **not** accepted as a `?token=` query parameter, and comparison is constant
+time. A wrong or missing credential returns `401` with a `WWW-Authenticate: Token` header.
+
+`GET /api/v1/auth/status` reports whether a credential is required and which header to use.
+It never returns the secret.
+
+These paths are always reachable without a credential because they carry no desired state:
+`/healthz`, `/api.js`, `/`, `/prototype-v6.html`, and `/api/v1/auth/status`.
+
+If `MIHOMO_SECRET` is empty, the panel starts only when `LISTEN_ADDR` is loopback; a
+listener reachable from the network is refused at startup. See
+[security.md](security.md#fail-closed-by-default).
 
 ## Resources
 

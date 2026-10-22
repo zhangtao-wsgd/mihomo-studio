@@ -37,6 +37,7 @@
 <header class="topbar"><div class="crumb">控制台 <span style="padding:0 7px;color:#c2c8d4">/</span> <b id="crumbTitle">总览</b></div><div class="top-right"><div class="runtime-pill"><i class="dot"></i><span>运行时正常</span></div><div class="avatar">T</div></div></header>
 <div class="content">
 <div id="workspaceNotice" class="workspace-notice"><span class="workspace-mark">●</span><div><strong>单一 Mihomo 实例 · 受控配置发布</strong><p>所有修改先进入草稿，经候选配置校验并明确确认后才会发布到当前实例。草稿不是第二个运行实例。</p></div><span class="tag green">单实例</span></div>
+<div id="authNotice" class="workspace-notice" style="display:none"></div>
 <section class="page active" id="page-overview">
   <div class="page-head"><div><div class="eyebrow">CONTROL CENTER / 01</div><h1>配置总览</h1><div class="subtitle">掌握当前配置、运行状态与最近变更。所有编辑均先进入草稿，不会直接影响运行中的内核。</div></div><div class="actions"><button class="btn btn-secondary" onclick="toast('已刷新运行时状态')">↻ 刷新状态</button><button class="btn btn-primary" onclick="goPage('releases')">↥ 创建发布预览</button></div></div>
   <div class="grid stats">
