@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,15 +33,40 @@ type Server struct {
 	// ActiveConfigPath is the runtime config file the service writes. It is reported by the
 	// overview so the settings page shows the path actually in use.
 	ActiveConfigPath string
+	// WebDir holds the browser assets. It is configurable instead of being resolved against
+	// the process working directory, so the binary does not silently serve nothing when
+	// started from a different directory.
+	WebDir string
+}
+
+// webDir returns the configured asset directory, defaulting to the layout used by the image.
+func (s *Server) webDir() string {
+	if strings.TrimSpace(s.WebDir) != "" {
+		return s.WebDir
+	}
+	return "web"
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
-	servePrototype := func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "web/prototype-v6.html") }
+	// The shell and its script are not versioned in their URLs, so a browser that cached an
+	// older copy would keep running it after an upgrade. `no-cache` still allows storing the
+	// response but requires revalidation, which http.ServeFile satisfies with its
+	// Last-Modified header. Without this a browser can serve stale JavaScript while the
+	// server has already changed behaviour it depends on.
+	serveStatic := func(w http.ResponseWriter, r *http.Request, name string) {
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, filepath.Join(s.webDir(), name))
+	}
+	servePrototype := func(w http.ResponseWriter, r *http.Request) {
+		serveStatic(w, r, "prototype-v6.html")
+	}
 	mux.HandleFunc("GET /{$}", servePrototype)
 	mux.HandleFunc("GET /prototype-v6.html", servePrototype)
-	mux.HandleFunc("GET /api.js", func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, "web/api.js") })
+	mux.HandleFunc("GET /api.js", func(w http.ResponseWriter, r *http.Request) {
+		serveStatic(w, r, "api.js")
+	})
 	// Reports whether the panel currently requires a credential, so the client can tell
 	// "wrong secret" apart from "no secret configured" without probing a protected route.
 	mux.HandleFunc("GET /api/v1/auth/status", s.authStatus)

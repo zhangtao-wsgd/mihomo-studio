@@ -71,7 +71,7 @@ func main() {
 		runtime = &workflow.HTTPRuntime{BaseURL: controller, Secret: secret}
 	}
 	flow := &workflow.Service{DB: db.DB, Builder: builder, Runtime: runtime, ActivePath: activePath}
-	server := &http.Server{Addr: listenAddr, Handler: (&api.Server{Store: db, Workflow: flow, Logger: logger, Auth: api.AuthConfig{Token: secret, AllowUnauthenticated: allowUnauthenticated}, ActiveConfigPath: activePath}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: listenAddr, Handler: (&api.Server{Store: db, Workflow: flow, Logger: logger, Auth: api.AuthConfig{Token: secret, AllowUnauthenticated: allowUnauthenticated}, ActiveConfigPath: activePath, WebDir: envOr("WEB_DIR", "web")}).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
