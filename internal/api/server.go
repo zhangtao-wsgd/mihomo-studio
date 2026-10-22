@@ -213,7 +213,21 @@ func (s *Server) updateSubscription(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	writeJSON(w, 200, x)
+
+	// The update request only carries editable fields. Read the persisted record back so
+	// the response includes the actual fetch status and timestamp preserved by the store.
+	items, err := s.Store.ListSubscriptions(r.Context())
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	for _, saved := range items {
+		if saved.ID == x.ID {
+			writeJSON(w, 200, saved)
+			return
+		}
+	}
+	fail(w, 500, store.ErrNotFound)
 }
 func (s *Server) refreshSubscription(w http.ResponseWriter, r *http.Request) {
 	if s.Workflow == nil || s.Workflow.Builder == nil {
