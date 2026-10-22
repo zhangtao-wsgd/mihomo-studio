@@ -2,8 +2,10 @@ package api
 
 import (
 	"crypto/subtle"
+	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -57,14 +59,33 @@ func IsLoopbackListener(listenAddr string) bool {
 
 // requireAuth rejects requests that do not carry the configured credential.
 //
-// Comparison is constant time so that repeated guesses cannot be distinguished by
-// response timing. The response deliberately does not say whether the token was missing
-// or wrong.
-func requireAuth(config AuthConfig, next http.Handler) http.Handler {
+// Comparison is constant time so that repeated guesses cannot be distinguished by response
+// timing. The response does not reveal the expected value. It does distinguish a missing
+// header from a mismatched one, because an operator staring at "wrong password" needs to know
+// whether the browser sent anything at all; that distinction tells an attacker nothing useful
+// about the secret.
+//
+// Failures are logged with the provided length but never the value, so a truncated paste or a
+// quoted secret is identifiable from the server side.
+func requireAuth(config AuthConfig, logger *slog.Logger, next http.Handler) http.Handler {
 	if !config.Enabled() {
 		return next
 	}
 	expected := []byte(strings.TrimSpace(config.Token))
+	logAuthFailure := func(r *http.Request, reason string, providedLen int) {
+		if logger == nil {
+			return
+		}
+		logger.Warn("admin credential rejected",
+			"reason", reason,
+			"path", r.URL.Path,
+			"method", r.Method,
+			"remote", r.RemoteAddr,
+			"header", adminTokenHeader,
+			"providedLength", providedLen,
+			"expectedLength", len(expected),
+		)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Static assets and the health probe cannot carry a custom header from a browser
 		// load, so they are served without a credential. They expose no desired state.
@@ -72,10 +93,18 @@ func requireAuth(config AuthConfig, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		provided := []byte(strings.TrimSpace(r.Header.Get(adminTokenHeader)))
-		if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
+		raw := r.Header.Get(adminTokenHeader)
+		if strings.TrimSpace(raw) == "" {
+			logAuthFailure(r, "missing", 0)
 			w.Header().Set("WWW-Authenticate", `Token realm="mihomo-studio"`)
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "a valid " + adminTokenHeader + " header is required"})
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing " + adminTokenHeader + " header; the panel requires the configured secret"})
+			return
+		}
+		provided := []byte(strings.TrimSpace(raw))
+		if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
+			logAuthFailure(r, "mismatch", len(provided))
+			w.Header().Set("WWW-Authenticate", `Token realm="mihomo-studio"`)
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "the supplied secret does not match; " + strconv.Itoa(len(provided)) + " characters received, the expected secret has " + strconv.Itoa(len(expected))})
 			return
 		}
 		next.ServeHTTP(w, r)

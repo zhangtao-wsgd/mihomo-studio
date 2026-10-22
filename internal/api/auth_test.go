@@ -32,7 +32,7 @@ func TestIsLoopbackListener(t *testing.T) {
 // With no token configured the middleware must be a pass-through, so a loopback-only
 // development run keeps working without a credential.
 func TestRequireAuthDisabledAllowsEverything(t *testing.T) {
-	handler := requireAuth(AuthConfig{}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/rules", nil)
@@ -44,7 +44,7 @@ func TestRequireAuthDisabledAllowsEverything(t *testing.T) {
 }
 
 func TestRequireAuthRejectsMissingToken(t *testing.T) {
-	handler := requireAuth(AuthConfig{Token: "s3cret"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{Token: "s3cret"}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("the protected handler must not run without a credential")
 	}))
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/rules", nil)
@@ -59,7 +59,7 @@ func TestRequireAuthRejectsMissingToken(t *testing.T) {
 }
 
 func TestRequireAuthRejectsWrongToken(t *testing.T) {
-	handler := requireAuth(AuthConfig{Token: "s3cret"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{Token: "s3cret"}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("the protected handler must not run with a wrong credential")
 	}))
 	for _, supplied := range []string{"wrong", "s3cre", "s3crett", ""} {
@@ -77,7 +77,7 @@ func TestRequireAuthRejectsWrongToken(t *testing.T) {
 
 func TestRequireAuthAcceptsCorrectToken(t *testing.T) {
 	var reached bool
-	handler := requireAuth(AuthConfig{Token: "s3cret"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{Token: "s3cret"}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -93,7 +93,7 @@ func TestRequireAuthAcceptsCorrectToken(t *testing.T) {
 // The credential must never be accepted in the query string: that would place it in
 // browser history, access logs, and Referer headers.
 func TestRequireAuthIgnoresQueryToken(t *testing.T) {
-	handler := requireAuth(AuthConfig{Token: "s3cret"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{Token: "s3cret"}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("a query-string token must not authenticate")
 	}))
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/v1/rules?token=s3cret", nil)
@@ -107,7 +107,7 @@ func TestRequireAuthIgnoresQueryToken(t *testing.T) {
 // Static assets and the health probe must stay reachable so the shell can load and the
 // container health check keeps working; they carry no desired state.
 func TestRequireAuthAllowsShellAndHealth(t *testing.T) {
-	handler := requireAuth(AuthConfig{Token: "s3cret"}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := requireAuth(AuthConfig{Token: "s3cret"}, discardLogger(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	for _, path := range []string{"/healthz", "/api.js", "/", "/prototype-v6.html", "/api/v1/auth/status"} {

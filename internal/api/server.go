@@ -109,7 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/audit-events", s.listAuditEvents)
 	mux.HandleFunc("GET /api/v1/overview", s.getOverview)
 	mux.HandleFunc("GET /api/v1/runtime", s.getRuntime)
-	return requestLog(s.Logger, securityHeaders(requireAuth(s.Auth, sameOrigin(mux))))
+	return requestLog(s.Logger, securityHeaders(requireAuth(s.Auth, s.Logger, sameOrigin(mux))))
 }
 
 // getOverview returns the dashboard payload assembled from persisted state.

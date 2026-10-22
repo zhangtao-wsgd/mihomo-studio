@@ -28,11 +28,14 @@
     catch (e) { state.online = false; setConnection(false); throw new Error('无法连接控制平面，请确认服务已启动。'); }
     if (response.status === 401) {
       state.online = false;
-      // The credential is missing or rejected. Return to the gate instead of retrying, so a
-      // wrong password is corrected rather than hammering the API.
+      // Surface the server's own explanation. It reports whether the header was missing and
+      // how many characters arrived, which makes a truncated paste or a stray quote obvious
+      // instead of looking like an unexplained rejection.
+      let detail = '';
+      try { const body = await response.json(); detail = body.error || ''; } catch (_) {}
       setToken('');
-      showLoginGate('密码不正确，请重新输入。');
-      throw new Error('需要管理密码才能读取或修改配置。');
+      showLoginGate(detail || '访问被拒绝，请重新输入密码。');
+      throw new Error(detail || '需要管理密码才能读取或修改配置。');
     }
     if (!response.ok) {
       let detail = `HTTP ${response.status}`;
