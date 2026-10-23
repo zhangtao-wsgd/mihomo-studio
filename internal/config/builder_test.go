@@ -178,3 +178,107 @@ func TestBuildFailurePreservesCurrentSubscriptionSnapshot(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRejectsTamperedLastKnownGoodSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "studio.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.DB.Close()
+
+	sub := domain.Subscription{
+		ID: "primary", Name: "Primary", URL: "https://subscription.example/sub.yaml",
+		Enabled: true, LastStatus: "fetched",
+	}
+	if err := st.SaveSubscription(ctx, sub); err != nil {
+		t.Fatalf("save subscription: %v", err)
+	}
+
+	snapshotPath := filepath.Join(t.TempDir(), "previous.yaml")
+	originalBody := []byte("proxies:\n  - name: trusted-node\n")
+	if err := os.WriteFile(snapshotPath, originalBody, 0o600); err != nil {
+		t.Fatalf("write previous snapshot: %v", err)
+	}
+	digest := sha256.Sum256(originalBody)
+	originalHash := hex.EncodeToString(digest[:])
+	builder := &Builder{DB: st.DB, SnapshotDir: t.TempDir(), ControllerSecret: "test-secret"}
+	if err := builder.recordCurrentSnapshot(ctx, sub.ID, originalHash, snapshotPath, time.Now().UTC().Format(time.RFC3339Nano), 1); err != nil {
+		t.Fatalf("seed previous snapshot: %v", err)
+	}
+
+	// Simulate disk corruption after the snapshot was recorded as current.
+	if err := os.WriteFile(snapshotPath, []byte("proxies:\n  - name: tampered-node\n"), 0o600); err != nil {
+		t.Fatalf("tamper previous snapshot: %v", err)
+	}
+	builder.fetch = func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("provider unavailable")
+	}
+
+	_, buildErr := builder.Build(ctx)
+	if buildErr == nil || !strings.Contains(buildErr.Error(), "SHA-256 integrity verification") {
+		t.Fatalf("Build error = %v, want snapshot integrity verification failure", buildErr)
+	}
+
+	var currentHash string
+	var current int
+	if err := st.DB.QueryRowContext(ctx, `SELECT content_sha256,is_current FROM subscription_snapshots WHERE subscription_id=? AND is_current=1`, sub.ID).Scan(&currentHash, &current); err != nil {
+		t.Fatalf("read current snapshot: %v", err)
+	}
+	if currentHash != originalHash || current != 1 {
+		t.Fatalf("corrupt snapshot pointer changed: hash=%q current=%d", currentHash, current)
+	}
+
+	var candidates int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM config_candidates`).Scan(&candidates); err != nil {
+		t.Fatalf("count candidates: %v", err)
+	}
+	if candidates != 0 {
+		t.Fatalf("corrupt snapshot must not produce a candidate, got %d", candidates)
+	}
+}
+
+func TestBuildBlocksFailedRefreshWithoutPreviousSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "studio.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.DB.Close()
+
+	sub := domain.Subscription{
+		ID: "fresh", Name: "Fresh", URL: "https://subscription.example/sub.yaml",
+		Enabled: true,
+	}
+	if err := st.SaveSubscription(ctx, sub); err != nil {
+		t.Fatalf("save subscription: %v", err)
+	}
+
+	builder := &Builder{DB: st.DB, SnapshotDir: t.TempDir(), ControllerSecret: "test-secret"}
+	builder.fetch = func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("provider unavailable")
+	}
+	_, buildErr := builder.Build(ctx)
+	if buildErr == nil ||
+		!strings.Contains(buildErr.Error(), "no last-known-good snapshot exists") ||
+		!strings.Contains(buildErr.Error(), "candidate generation is blocked") {
+		t.Fatalf("Build error = %v, want explicit block when no trusted snapshot exists", buildErr)
+	}
+
+	var candidates int
+	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM config_candidates`).Scan(&candidates); err != nil {
+		t.Fatalf("count candidates: %v", err)
+	}
+	if candidates != 0 {
+		t.Fatalf("failed initial refresh must not produce a candidate, got %d", candidates)
+	}
+
+	var status string
+	if err := st.DB.QueryRowContext(ctx, `SELECT last_status FROM subscriptions WHERE id=?`, sub.ID).Scan(&status); err != nil {
+		t.Fatalf("read subscription status: %v", err)
+	}
+	if status != "fetch_failed" {
+		t.Fatalf("subscription status = %q, want fetch_failed", status)
+	}
+}
+
